@@ -97,6 +97,7 @@ import pandas as pd
 import numpy as np
 from IPython.display import display
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import copy
@@ -121,6 +122,11 @@ def polar_coordinate_angle(x, y, depot_x, depot_y):
     angle = np.arctan2(delta_y, delta_x)
     return angle if angle >= 0 else angle + 2 * np.pi
 
+def clockwise_angle(angle_ccw):
+    """
+    Convierte un ángulo CCW a su equivalente horario en [0, 2π).
+    """
+    return (-angle_ccw) % (2 * np.pi)
 
 def radius(x, y, depot_x, depot_y):
     """
@@ -139,9 +145,13 @@ df['E'] = df['ventana_inicio'].apply(time_to_minutes)
 df['L'] = df['ventana_fin'].apply(time_to_minutes)
 
 
+clockwise = False
 df['AN'] = df.apply(
     lambda row: polar_coordinate_angle(row['x'], row['y'], df.loc[0, 'x'], df.loc[0, 'y']), axis=1
 )
+if clockwise:
+    df['AN'] = df['AN'].apply(clockwise_angle)
+
 df['R'] = df.apply(
     lambda row: radius(row['x'], row['y'], df.loc[0, 'x'], df.loc[0, 'y']), axis=1
 )
@@ -161,23 +171,6 @@ coords = df[['x', 'y']].values
 D = np.sqrt(((coords[:, None] - coords[None, :]) ** 2).sum(axis=2))
 
 display(df)
-
-
-# -----------------------------------------------------------------------------
-# Plotting Depot and Clients
-# -----------------------------------------------------------------------------
-
-plt.figure(figsize=(8*1.5, 6*1.5))
-plt.scatter(df.loc[0, 'x'], df.loc[0, 'y'], s=200, c='red', label='Depósito')
-plt.scatter(df.loc[1:, 'x'], df.loc[1:, 'y'], s=100, c='blue', label='Clientes')
-for i, row in df.iterrows():
-    plt.text(row['x'] + 0.75, row['y'] + 0.75, str(row['index']), fontsize=12)
-plt.title('Depósito y Clientes')
-plt.xlabel('Coordenada X')
-plt.ylabel('Coordenada Y')
-plt.legend()
-plt.grid()
-plt.show()
 
 
 # -----------------------------------------------------------------------------
@@ -236,6 +229,7 @@ class Ruta:
     costo_total: float
     factible: bool
     productos_entregados: Dict[int, List[str]]  # cliente_id -> ['G', 'D']
+    tiempos_llegada: List[float]  # Tiempo de llegada a cada cliente (en minutos desde 04:00)
 
 
 class SweepAlgorithm:
@@ -244,8 +238,7 @@ class SweepAlgorithm:
     adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
     """
     
-    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, 
-                 tiempo_descarga: float = 5, M: float = 10000):
+    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, tiempo_descarga: float = 5, M: float = 10000):
         """
         Inicializa el algoritmo con los datos del problema.
         
@@ -304,17 +297,14 @@ class SweepAlgorithm:
                 costo_km=params['costo_km']
             ))
     
-
     def distancia(self, i: int, j: int) -> float:
         """Retorna la distancia entre los nodos i y j."""
         return self.D[i, j]
     
-
     def tiempo_viaje(self, i: int, j: int) -> float:
         """Retorna el tiempo de viaje en minutos entre los nodos i y j."""
         return (self.distancia(i, j) / self.velocidad) * 60
     
-
     def calcular_tiempo_servicio(self, cliente_id: int, productos: List[str]) -> float:
         """
         Calcula el tiempo de servicio en un cliente según los productos entregados.
@@ -328,7 +318,6 @@ class SweepAlgorithm:
         """
         return len(productos) * self.tiempo_descarga
     
-
     def verificar_factibilidad_ruta(self, ruta: List[int], cisterna: Cisterna,
                                    productos_por_cliente: Dict[int, List[str]]) -> Tuple[bool, float, Dict]:
         """
@@ -402,7 +391,6 @@ class SweepAlgorithm:
             'tiempo_retorno': tiempo_retorno
         }
     
-
     def calcular_distancia_ruta(self, ruta: List[int]) -> float:
         """Calcula la distancia total de una ruta incluyendo ida y vuelta al depot."""
         if len(ruta) == 0:
@@ -417,7 +405,6 @@ class SweepAlgorithm:
         
         return distancia
     
-
     def seleccionar_mejor_cisterna(self, ruta: List[int], 
                                    productos_por_cliente: Dict[int, List[str]]) -> Optional[Cisterna]:
         """
@@ -442,7 +429,6 @@ class SweepAlgorithm:
         cisternas_factibles.sort(key=lambda x: x[1])
         return cisternas_factibles[0][0]
     
-
     def forward_sweep(self) -> List[Ruta]:
         """
         Implementa el algoritmo Forward Sweep.
@@ -531,6 +517,9 @@ class SweepAlgorithm:
                 distancia = self.calcular_distancia_ruta(ruta_actual)
                 costo = cisterna.costo_fijo + cisterna.costo_km * distancia
                 
+                # Extraer tiempos de llegada en orden de la ruta
+                tiempos_llegada = [info['tiempos_llegada'][cliente_id] for cliente_id in ruta_actual]
+                
                 ruta_obj = Ruta(
                     cisterna=cisterna,
                     clientes=ruta_actual,
@@ -540,7 +529,8 @@ class SweepAlgorithm:
                     tiempo_total=tiempo_total,
                     costo_total=costo,
                     factible=factible,
-                    productos_entregados=productos_ruta
+                    productos_entregados=productos_ruta,
+                    tiempos_llegada=tiempos_llegada
                 )
                 
                 rutas.append(ruta_obj)
@@ -562,7 +552,6 @@ class SweepAlgorithm:
         
         return rutas
     
-
     def imprimir_solucion(self, rutas: List[Ruta]):
         """Imprime la solución de forma legible."""
         print("\n" + "="*80)
@@ -589,6 +578,13 @@ class SweepAlgorithm:
             print(f"    Distancia: {ruta.distancia_total:.2f} km")
             print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
             print(f"    Costo: ${ruta.costo_total:,.2f}")
+            print(f"    Tiempos de llegada (min desde 04:00):")
+            for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
+                hora = 4 + tiempo_llegada // 60
+                minuto = tiempo_llegada % 60
+                cliente = self.clientes[cliente_id - 1]
+                ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
+                print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
             print(f"    Entregas por cliente:")
             for cliente_id, productos in ruta.productos_entregados.items():
                 prods_str = ", ".join(productos)
@@ -596,7 +592,106 @@ class SweepAlgorithm:
         
         print("\n" + "="*80)
 
-    
+    def visualizar_rutas(self, rutas: List[Ruta]):
+        """
+        Visualiza las rutas generadas en un mapa.
+        
+        Args:
+            rutas: Lista de rutas a visualizar
+        """
+        # Definir colores para las rutas (ciclo de colores si hay más de 10 rutas)
+        colores_base = [
+            '#FF6B6B', '#FFA07A', '#98D8C8', '#F7DC6F', 
+            '#45B7D1', '#BB8FCE', '#F8B739', '#85C1E2',
+            '#E63946', '#06FFA5', '#A8DADC', '#FF006E', 
+            '#FB5607', '#3A86FF', '#FFBE0B', '#06D6A0', 
+            '#EF476F', '#8338EC', '#4ECDC4', '#52B788',
+            '#118AB2', '#FFD166', '#D62828', '#F77F00',
+            '#2EC4B6', '#E71D36', '#011627', '#C9ADA7'
+        ]
+        
+        fig, ax = plt.subplots(figsize=(12, 9))
+        
+        # Dibujar depot
+        ax.scatter(self.depot.x, self.depot.y, s=300, c='red', marker='s', 
+                  label='Depósito', zorder=5, edgecolors='black', linewidth=2)
+        ax.text(self.depot.x + 0.75, self.depot.y + 0.75, 'DEPOT', 
+               fontsize=10, fontweight='bold')
+        
+        # Dibujar clientes
+        clientes_x = [c.x for c in self.clientes]
+        clientes_y = [c.y for c in self.clientes]
+        ax.scatter(clientes_x, clientes_y, s=150, c='lightblue', 
+                  label='Clientes', zorder=4, edgecolors='black', linewidth=1)
+        
+        # Etiquetar clientes
+        for cliente in self.clientes:
+            ax.text(cliente.x + 0.75, cliente.y + 0.75, str(cliente.id), 
+                   fontsize=9)
+        
+        # Dibujar rutas
+        legend_elements = []
+        
+        for idx, ruta in enumerate(rutas):
+            color = colores_base[idx % len(colores_base)]
+            
+            # Construir la secuencia completa: Depot -> clientes -> Depot
+            secuencia = [0] + ruta.clientes + [0]
+            
+            # Obtener coordenadas
+            x_coords = []
+            y_coords = []
+            for nodo in secuencia:
+                if nodo == 0:
+                    x_coords.append(self.depot.x)
+                    y_coords.append(self.depot.y)
+                else:
+                    cliente = self.clientes[nodo - 1]
+                    x_coords.append(cliente.x)
+                    y_coords.append(cliente.y)
+            
+            # Dibujar la ruta
+            ax.plot(x_coords, y_coords, color=color, linewidth=2, 
+                   alpha=0.7, zorder=3)
+            
+            # Agregar flechas para indicar dirección
+            for i in range(len(x_coords) - 1):
+                dx = x_coords[i+1] - x_coords[i]
+                dy = y_coords[i+1] - y_coords[i]
+                # Dibujar flecha en el punto medio de cada segmento
+                mid_x = x_coords[i] + dx * 0.5
+                mid_y = y_coords[i] + dy * 0.5
+                ax.annotate('', xy=(mid_x + dx*0.1, mid_y + dy*0.1), 
+                          xytext=(mid_x - dx*0.1, mid_y - dy*0.1),
+                          arrowprops=dict(arrowstyle='->', color=color, 
+                                        lw=1.5, alpha=0.8))
+            
+            # Crear etiqueta para la leyenda
+            tipo_str = f"Tipo {ruta.cisterna.tipo}"
+            costo_str = f"${ruta.costo_total:.0f}"
+            dist_str = f"{ruta.distancia_total:.1f}km"
+            legend_elements.append(
+                mpatches.Patch(color=color, 
+                              label=f"Ruta {idx+1}: {tipo_str} | {dist_str} | {costo_str}")
+            )
+        
+        # Configurar el gráfico
+        ax.set_xlabel('Coordenada X (km)', fontsize=11)
+        ax.set_ylabel('Coordenada Y (km)', fontsize=11)
+        ax.set_title('Visualización de Rutas - Angular Sweep Algorithm', 
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Agregar leyenda
+        ax.legend(handles=legend_elements, loc='upper left', 
+                 bbox_to_anchor=(1.02, 1), fontsize=9, framealpha=0.9)
+        
+        plt.tight_layout()
+        plt.show()
+
+
+
 def angular_sweep_algorithm(
         data: pd.DataFrame, 
         tipos_cisternas: Dict, 
@@ -627,7 +722,8 @@ def angular_sweep_algorithm(
 
     solver = SweepAlgorithm(data, tipos_cisternas, velocidad, tiempo_descarga)
     rutas = solver.forward_sweep()
-    solver.imprimir_solucion(rutas)
+    # solver.imprimir_solucion(rutas)
+    solver.visualizar_rutas(rutas)
     
     return rutas
 
