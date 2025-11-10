@@ -137,7 +137,7 @@ def radius(x, y, depot_x, depot_y):
 
 
 df = (
-    pd.read_csv('./instancias/10_clientes_1.csv')
+    pd.read_csv('./instancias/50_clientes.csv')
     .reset_index(drop=False)
 )
 
@@ -552,44 +552,65 @@ class SweepAlgorithm:
         
         return rutas
     
-    def imprimir_solucion(self, rutas: List[Ruta]):
+    def improving_sweep(self, rutas_iniciales: List[Ruta]) -> List[Ruta]:
+        """
+        Implementa el algoritmo de mejora del Forward Angular Sweep.
+
+        The procedure to modify consider replacing one location in route K with one or more locations in route K + 1 for K = 1, 2, ..., m - 1, where m is the number of routes formed.
+        A replacement is made only if the cost of the two routes after the replacement is less than the cost before the replacement and both routes remain feasible after the replacement.
+
+        The location to be deleted from route K is obtained by minimizing a function of the radius R(I) and the angle An(I) of each location in route K.
+        This provides a location that is close to the depot and also close to the next route. A function that works very well is R(I) + An(I) * AVR (Average Radius among all locations).
+
+        The first location, say location p, that is considered for inclusion in route K is the location in route K + 1 that is nearest to the last location that was added to route K. 
+        The second location considered for inclusion in route K is the location in route K + 1 that is nearest to location p.
+        If one or more locations are added to route K by this scheme, then the next location in route K + 1 is also checked to see if it can be included in route K.
+        
+        The process of adding one or more locations to route K and deleting another location continues until no further improvement is found. 
+        The X and Y are then rotated counterclockwise, and the entire process is repeated until all possibilities have been exhausted.
+        """
+        return rutas_iniciales
+
+    def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
         """Imprime la solución de forma legible."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("SOLUCIÓN - ANGULAR SWEEP ALGORITHM")
-        print("="*80)
+        print("=" * 80)
         
         costo_total = sum(r.costo_total for r in rutas)
         distancia_total = sum(r.distancia_total for r in rutas)
         
-        print(f"\n📊 RESUMEN GENERAL:")
-        print(f"  • Número de rutas: {len(rutas)}")
-        print(f"  • Costo total: ${costo_total:,.2f}")
-        print(f"  • Distancia total: {distancia_total:.2f} km")
-        print(f"  • Cisternas Tipo 1: {sum(1 for r in rutas if r.cisterna.tipo == 1)}")
-        print(f"  • Cisternas Tipo 2: {sum(1 for r in rutas if r.cisterna.tipo == 2)}")
-        
-        print(f"\n📋 DETALLE DE RUTAS:")
-        for idx, ruta in enumerate(rutas, 1):
-            print(f"\n  Ruta #{idx}:")
-            print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
-            print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
-            print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
-                  f"Diésel={ruta.carga_diesel:.0f}gal ({ruta.carga_diesel/ruta.cisterna.cap_diesel*100:.1f}%)")
-            print(f"    Distancia: {ruta.distancia_total:.2f} km")
-            print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
-            print(f"    Costo: ${ruta.costo_total:,.2f}")
-            print(f"    Tiempos de llegada (min desde 04:00):")
-            for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
-                hora = 4 + tiempo_llegada // 60
-                minuto = tiempo_llegada % 60
-                cliente = self.clientes[cliente_id - 1]
-                ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
-                print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
-            print(f"    Entregas por cliente:")
-            for cliente_id, productos in ruta.productos_entregados.items():
-                prods_str = ", ".join(productos)
-                print(f"      - Cliente {cliente_id}: {prods_str}")
-        
+        if verbosity >= 1:
+            print(f"\n>>> RESUMEN GENERAL:")
+            print(f"  * Número de rutas: {len(rutas)}")
+            print(f"  * Costo total: ${costo_total:,.2f}")
+            print(f"  * Distancia total: {distancia_total:.2f} km")
+            print(f"  * Cisternas Tipo 1: {sum(1 for r in rutas if r.cisterna.tipo == 1)}")
+            print(f"  * Cisternas Tipo 2: {sum(1 for r in rutas if r.cisterna.tipo == 2)}")
+
+        if verbosity >= 2:    
+            print(f"\n>>> DETALLE DE RUTAS:")
+            for idx, ruta in enumerate(rutas, 1):
+                print(f"\n  Ruta #{idx}:")
+                print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
+                print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
+                print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
+                    f"Diésel={ruta.carga_diesel:.0f}gal ({ruta.carga_diesel/ruta.cisterna.cap_diesel*100:.1f}%)")
+                print(f"    Distancia: {ruta.distancia_total:.2f} km")
+                print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
+                print(f"    Costo: ${ruta.costo_total:,.2f}")
+                print(f"    Tiempos de llegada (min desde 04:00):")
+                for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
+                    hora = 4 + tiempo_llegada // 60
+                    minuto = tiempo_llegada % 60
+                    cliente = self.clientes[cliente_id - 1]
+                    ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
+                    print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
+                print(f"    Entregas por cliente:")
+                for cliente_id, productos in ruta.productos_entregados.items():
+                    prods_str = ", ".join(productos)
+                    print(f"      - Cliente {cliente_id}: {prods_str}")
+            
         print("\n" + "="*80)
 
     def visualizar_rutas(self, rutas: List[Ruta]):
@@ -721,8 +742,13 @@ def angular_sweep_algorithm(
     """
 
     solver = SweepAlgorithm(data, tipos_cisternas, velocidad, tiempo_descarga)
+    
     rutas = solver.forward_sweep()
-    # solver.imprimir_solucion(rutas)
+    solver.imprimir_solucion(rutas, 1)
+    solver.visualizar_rutas(rutas)
+
+    rutas = solver.improving_sweep(rutas)
+    solver.imprimir_solucion(rutas, 1)
     solver.visualizar_rutas(rutas)
     
     return rutas
