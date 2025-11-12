@@ -170,27 +170,7 @@ def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------------------------------------------------------------
-# Parámetros del problema
-# -----------------------------------------------------------------------------
-
-# Distancias euclidianas
-coords = df[['x', 'y']].values
-D = np.sqrt(((coords[:, None] - coords[None, :]) ** 2).sum(axis=2))
-
-# Parámetros de la flota
-N = df.shape[0]  # Número total de nodos (depósito + clientes)
-tipos_cisternas = {
-    1: {'cap_gasohol': 5800, 'cap_diesel': 5200, 'costo_fijo': 450, 'costo_km': 2},
-    2: {'cap_gasohol': 4000, 'cap_diesel': 4000, 'costo_fijo': 370, 'costo_km': 2}
-}
-num_vehiculos_por_tipo = 20
-velocidad = 60  # km/h
-tiempo_descarga = 5  # minutos por producto
-M = 10000  # Big M
-
-
-# -----------------------------------------------------------------------------
-# Initial Solution Construction Algorithms
+# Data Models
 # -----------------------------------------------------------------------------
 
 @dataclass
@@ -231,47 +211,41 @@ class Ruta:
     productos_entregados: Dict[int, List[str]]  # cliente_id -> ['G', 'D']
     tiempos_llegada: List[float]  # Tiempo de llegada a cada cliente (en minutos desde 04:00)
 
+# -----------------------------------------------------------------------------
+# Parámetros del problema
+# -----------------------------------------------------------------------------
 
-def contar_vehiculos(rutas: List[Ruta]) -> Dict[int, int]:
-    contador = {1: 0, 2: 0}
-    for ruta in rutas:
-        contador[ruta.cisterna.tipo] += 1
-    return contador
+tipos_cisternas = {
+    1: {'cap_gasohol': 5800, 'cap_diesel': 5200, 'costo_fijo': 450, 'costo_km': 2},
+    2: {'cap_gasohol': 4000, 'cap_diesel': 4000, 'costo_fijo': 370, 'costo_km': 2}
+}
 
+# -----------------------------------------------------------------------------
+# Problem Instance
+# -----------------------------------------------------------------------------
 
-def build_product_map(clientes_list: List[int], route_k: Ruta, route_k_plus_1: Ruta) -> Dict[int, List[str]]:
-    """
-    Build a mapping of customer IDs to their delivered products from two routes.
-    """
-    m: Dict[int, List[str]] = {}
-    for cid in clientes_list:
-        if cid in route_k.productos_entregados:
-            m[cid] = route_k.productos_entregados[cid]
-        elif cid in route_k_plus_1.productos_entregados:
-            m[cid] = route_k_plus_1.productos_entregados[cid]
-    return m
-
-
-class SweepAlgorithm:
-    """
-    Implements the Angular Sweep Algorithm for initial solution construction.
-    Based on Gillett & Miller (1974) - 'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
-    """
+class ProblemInstance:
+    """Encapsula los datos y parámetros de una instancia del problema."""
     
-    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, 
-                 tiempo_descarga: float = 5, M: float = 10000):
+    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, 
+                 num_vehiculos_por_tipo: int = 20,
+                 velocidad: float = 60,     # km/h
+                 tiempo_descarga: float = 5,    # minutos por producto
+                 M: float = 10000):
         """
-        Inicializa el algoritmo con los datos del problema.
+        Inicializa una instancia del problema.
         
         Args:
             df: DataFrame con información de clientes (ya ordenado por ángulo)
             tipos_cisternas: Diccionario con características de las cisternas
+            num_vehiculos_por_tipo: Número de vehículos disponibles por tipo
             velocidad: Velocidad en km/h
             tiempo_descarga: Tiempo de descarga por producto en minutos
             M: Big M para restricciones
         """
         self.df = df
         self.tipos_cisternas = tipos_cisternas
+        self.num_vehiculos_por_tipo = num_vehiculos_por_tipo
         self.velocidad = velocidad
         self.tiempo_descarga = tiempo_descarga
         self.M = M
@@ -290,7 +264,6 @@ class SweepAlgorithm:
         )
         
         self.clientes = []
-        self.n = 0
         for idx, row in df.iloc[1:].iterrows():
             self.clientes.append(Cliente(
                 id=int(row['index']),
@@ -303,7 +276,8 @@ class SweepAlgorithm:
                 angulo=row['AN'],
                 radio=row['R']
             ))
-            self.n += 1
+        
+        self.n = len(self.clientes)
         
         # Calcular matriz de distancias
         coords = df[['x', 'y']].values
@@ -328,18 +302,34 @@ class SweepAlgorithm:
         """Retorna el tiempo de viaje en minutos entre los nodos i y j."""
         return (self.distancia(i, j) / self.velocidad) * 60
     
+    def cliente_por_id(self, cliente_id: int) -> Cliente:
+        """Retorna el objeto Cliente dado su ID."""
+        if cliente_id == 0:
+            return self.depot
+        return self.clientes[cliente_id - 1]
+
+
+# -----------------------------------------------------------------------------
+# Route Evaluation and Utilities
+# -----------------------------------------------------------------------------
+
+class RouteEvaluator:
+    """Evalúa y valida rutas."""
+    
+    def __init__(self, instance: ProblemInstance):
+        self.instance = instance
+    
     def calcular_tiempo_servicio(self, productos: List[str]) -> float:
         """
         Calcula el tiempo de servicio en un cliente según los productos entregados.
         
         Args:
-            cliente_id: ID del cliente
             productos: Lista de productos entregados ['G'] o ['D'] o ['G', 'D']
         
         Returns:
             Tiempo total de servicio en minutos
         """
-        return len(productos) * self.tiempo_descarga
+        return len(productos) * self.instance.tiempo_descarga
     
     def verificar_factibilidad_ruta(self, ruta: List[int], cisterna: Cisterna,
                                    productos_por_cliente: Dict[int, List[str]]) -> Tuple[bool, float, Dict]:
@@ -359,7 +349,7 @@ class SweepAlgorithm:
         carga_diesel = 0
         
         for cliente_id in ruta:
-            cliente = self.clientes[cliente_id - 1]  # -1 porque clientes_id empieza en 1
+            cliente = self.instance.cliente_por_id(cliente_id)
             if 'G' in productos_por_cliente[cliente_id]:
                 carga_gasohol += cliente.demanda_gasohol
             if 'D' in productos_por_cliente[cliente_id]:
@@ -369,16 +359,16 @@ class SweepAlgorithm:
             return False, 0, {'razon': 'capacidad_excedida'}
         
         # Verificar ventanas de tiempo
-        tiempo_actual = self.depot.ventana_inicio
+        tiempo_actual = self.instance.depot.ventana_inicio
         nodo_actual = 0  # Depot
         
         tiempos_llegada = {}
         
         for cliente_id in ruta:
-            cliente = self.clientes[cliente_id - 1]
+            cliente = self.instance.cliente_por_id(cliente_id)
             
             # Tiempo de viaje al siguiente cliente
-            tiempo_viaje = self.tiempo_viaje(nodo_actual, cliente_id)
+            tiempo_viaje = self.instance.tiempo_viaje(nodo_actual, cliente_id)
             tiempo_llegada = tiempo_actual + tiempo_viaje
             
             # Si llegamos antes de la ventana, esperamos
@@ -398,10 +388,10 @@ class SweepAlgorithm:
             nodo_actual = cliente_id
         
         # Retorno al depot
-        tiempo_viaje_retorno = self.tiempo_viaje(nodo_actual, 0)
+        tiempo_viaje_retorno = self.instance.tiempo_viaje(nodo_actual, 0)
         tiempo_retorno = tiempo_actual + tiempo_viaje_retorno
         
-        if tiempo_retorno > self.depot.ventana_fin:
+        if tiempo_retorno > self.instance.depot.ventana_fin:
             return False, 0, {'razon': 'retorno_tardio'}
         
         return True, tiempo_retorno, {
@@ -416,12 +406,12 @@ class SweepAlgorithm:
         if len(ruta) == 0:
             return 0
         
-        distancia = self.distancia(0, ruta[0])  # Depot al primer cliente
+        distancia = self.instance.distancia(0, ruta[0])  # Depot al primer cliente
         
         for i in range(len(ruta) - 1):
-            distancia += self.distancia(ruta[i], ruta[i + 1])
+            distancia += self.instance.distancia(ruta[i], ruta[i + 1])
         
-        distancia += self.distancia(ruta[-1], 0)  # Último cliente al depot
+        distancia += self.instance.distancia(ruta[-1], 0)  # Último cliente al depot
         
         return distancia
     
@@ -429,16 +419,16 @@ class SweepAlgorithm:
                                    productos_por_cliente: Dict[int, List[str]],
                                    vehiculos_usados: Dict[int, int]) -> Optional[Cisterna]:
         """
-        Selecciona la cisterna de menor costo que puede satisfacer la ruta, constraints de distancia, capacidad y alquiler de vehiculos
+        Selecciona la cisterna de menor costo que puede satisfacer la ruta.
         
         Returns:
             Cisterna seleccionada o None si ninguna es factible
         """
         cisternas_factibles = []
         
-        for cisterna in self.cisternas_disponibles:
+        for cisterna in self.instance.cisternas_disponibles:
             # Verificar si hay vehículos disponibles de este tipo
-            if vehiculos_usados.get(cisterna.tipo, 0) >= num_vehiculos_por_tipo:
+            if vehiculos_usados.get(cisterna.tipo, 0) >= self.instance.num_vehiculos_por_tipo:
                 continue
             
             factible, _, _ = self.verificar_factibilidad_ruta(ruta, cisterna, productos_por_cliente)
@@ -454,12 +444,81 @@ class SweepAlgorithm:
         cisternas_factibles.sort(key=lambda x: x[1])
         return cisternas_factibles[0][0]
     
-    # Initial solution construction: Sweep Algorithm (Gillet & Miller, 1974)
+    def crear_ruta_objeto(self, clientes: List[int], cisterna: Cisterna, 
+                         productos_por_cliente: Dict[int, List[str]]) -> Ruta:
+        """Crea un objeto Ruta completo con todos sus atributos calculados."""
+        factible, tiempo_total, info = self.verificar_factibilidad_ruta(
+            clientes, cisterna, productos_por_cliente
+        )
+        distancia = self.calcular_distancia_ruta(clientes)
+        costo = cisterna.costo_fijo + cisterna.costo_km * distancia
+        
+        tiempos_llegada = [info['tiempos_llegada'][cid] for cid in clientes]
+        
+        return Ruta(
+            cisterna=cisterna,
+            clientes=clientes,
+            carga_gasohol=info['carga_gasohol'],
+            carga_diesel=info['carga_diesel'],
+            distancia_total=distancia,
+            tiempo_total=tiempo_total,
+            costo_total=costo,
+            factible=factible,
+            productos_entregados=productos_por_cliente,
+            tiempos_llegada=tiempos_llegada
+        )
+
+
+# -----------------------------------------------------------------------------
+# Utility Functions
+# -----------------------------------------------------------------------------
+
+def contar_vehiculos(rutas: List[Ruta]) -> Dict[int, int]:
+    """Cuenta el número de vehículos usados por tipo."""
+    contador = {1: 0, 2: 0}
+    for ruta in rutas:
+        contador[ruta.cisterna.tipo] += 1
+    return contador
+
+
+def build_product_map(clientes_list: List[int], route_k: Ruta, route_k_plus_1: Ruta) -> Dict[int, List[str]]:
+    """
+    Build a mapping of customer IDs to their delivered products from two routes.
+    """
+    m: Dict[int, List[str]] = {}
+    for cid in clientes_list:
+        if cid in route_k.productos_entregados:
+            m[cid] = route_k.productos_entregados[cid]
+        elif cid in route_k_plus_1.productos_entregados:
+            m[cid] = route_k_plus_1.productos_entregados[cid]
+    return m
+
+
+# -----------------------------------------------------------------------------
+# Sweep Algorithm for Initial Solution Construction
+# -----------------------------------------------------------------------------
+
+class SweepAlgorithm:
+    """
+    Implements the Angular Sweep Algorithm for initial solution construction.
+    Based on Gillett & Miller (1974) - 'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
+    """
+    
+    def __init__(self, instance: ProblemInstance):
+        """
+        Inicializa el algoritmo con una instancia del problema.
+        
+        Args:
+            instance: Instancia del problema con todos los datos necesarios
+        """
+        self.instance = instance
+        self.evaluator = RouteEvaluator(instance)
+    
     def forward_sweep(self) -> List[Ruta]:
         """
         Algoritmo Forward Sweep.
-        Particiona los clientes en rutas comenzando desde el cliente con menor ángulo, agregando clientes mientras se respeten las restricciones de capacidad y tiempo.
-
+        Particiona los clientes en rutas comenzando desde el cliente con menor ángulo.
+        
         Implementación del algoritmo Angular Sweep de Gillett & Miller (1974) adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
             'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
 
@@ -485,27 +544,26 @@ class SweepAlgorithm:
                 This improvement process is continued both in the clockwise and counterclockwise directions until no further improvement is possible.
 
                 The backward-sweep algorithm is similar to the forward-sweep algorithm except that the locations are considered in the reverse order.
-        
+
         Returns:
             Lista de rutas generadas
         """
         rutas = []
-        clientes_no_asignados = set(range(1, len(self.clientes) + 1))
+        clientes_no_asignados = set(range(1, self.instance.n + 1))
         demandas_pendientes = {
             c.id: {'G': c.demanda_gasohol > 0, 'D': c.demanda_diesel > 0} 
-            for c in self.clientes
+            for c in self.instance.clientes
         }
-        vehiculos_usados = {1: 0, 2: 0}  # Contador de vehículos por tipo
+        vehiculos_usados = {1: 0, 2: 0}
         
         while clientes_no_asignados:
-            # Iniciar nueva ruta
             ruta_actual = []
-            productos_ruta = {}  # {cliente_id: ['G', 'D']}
+            productos_ruta = {}
             
-            # Intentar construir ruta
-            for cliente_id in sorted(clientes_no_asignados, key=lambda c: self.clientes[c-1].angulo):
+            for cliente_id in sorted(clientes_no_asignados, 
+                                    key=lambda c: self.instance.cliente_por_id(c).angulo):
                 
-                cliente = self.clientes[cliente_id - 1]
+                cliente = self.instance.cliente_por_id(cliente_id)
                 
                 # Determinar qué productos entregar
                 productos = []
@@ -522,179 +580,91 @@ class SweepAlgorithm:
                 productos_tentativa = productos_ruta.copy()
                 productos_tentativa[cliente_id] = productos
                 
-                # Intentar con ambos tipos de cisterna
-                cisterna_factible = self.seleccionar_mejor_cisterna(
+                cisterna_factible = self.evaluator.seleccionar_mejor_cisterna(
                     ruta_tentativa, productos_tentativa, vehiculos_usados
                 )
                 
                 if cisterna_factible:
-                    # El cliente cabe en la ruta
                     ruta_actual = ruta_tentativa
                     productos_ruta = productos_tentativa
                 else:
-                    # No cabe, intentar solo con un producto
+                    # Intentar solo con un producto si es posible
                     if len(productos) == 2:
-                        # Intentar solo con gasohol
-                        productos_tentativa[cliente_id] = ['G']
-                        cisterna_g = self.seleccionar_mejor_cisterna(
-                            ruta_tentativa, productos_tentativa, vehiculos_usados
-                        )
-                        
-                        if cisterna_g:
-                            ruta_actual = ruta_tentativa
-                            productos_ruta = productos_tentativa
-                            continue
-                        
-                        # Intentar solo con diesel
-                        productos_tentativa[cliente_id] = ['D']
-                        cisterna_d = self.seleccionar_mejor_cisterna(
-                            ruta_tentativa, productos_tentativa, vehiculos_usados
-                        )
-                        
-                        if cisterna_d:
-                            ruta_actual = ruta_tentativa
-                            productos_ruta = productos_tentativa
-                            continue
-                    
-                    # No se puede agregar más, cerrar ruta
-                    break
+                        for prod in ['G', 'D']:
+                            productos_tentativa[cliente_id] = [prod]
+                            cisterna = self.evaluator.seleccionar_mejor_cisterna(
+                                ruta_tentativa, productos_tentativa, vehiculos_usados
+                            )
+                            if cisterna:
+                                ruta_actual = ruta_tentativa
+                                productos_ruta = productos_tentativa
+                                break
+                        else:
+                            break  # No cabe ni con un solo producto
+                    else:
+                        break  # No se puede agregar más
             
             # Crear objeto Ruta
             if ruta_actual:
-                cisterna = self.seleccionar_mejor_cisterna(ruta_actual, productos_ruta, vehiculos_usados)
+                cisterna = self.evaluator.seleccionar_mejor_cisterna(
+                    ruta_actual, productos_ruta, vehiculos_usados
+                )
                 
                 if cisterna is None:
                     raise ValueError(
-                        f"No hay vehículos disponibles. Uso actual: Tipo 1: {vehiculos_usados[1]}/{num_vehiculos_por_tipo}, "
-                        f"Tipo 2: {vehiculos_usados[2]}/{num_vehiculos_por_tipo}. "
-                        f"Clientes no asignados: {clientes_no_asignados}"
+                        f"No hay vehículos disponibles. Uso: Tipo 1: {vehiculos_usados[1]}/{self.instance.num_vehiculos_por_tipo}, "
+                        f"Tipo 2: {vehiculos_usados[2]}/{self.instance.num_vehiculos_por_tipo}"
                     )
                 
-                factible, tiempo_total, info = self.verificar_factibilidad_ruta(
-                    ruta_actual, cisterna, productos_ruta
-                )
-                distancia = self.calcular_distancia_ruta(ruta_actual)
-                costo = cisterna.costo_fijo + cisterna.costo_km * distancia
-                
-                # Extraer tiempos de llegada en orden de la ruta
-                tiempos_llegada = [info['tiempos_llegada'][cliente_id] for cliente_id in ruta_actual]
-                
-                ruta_obj = Ruta(
-                    cisterna=cisterna,
-                    clientes=ruta_actual,
-                    carga_gasohol=info['carga_gasohol'],
-                    carga_diesel=info['carga_diesel'],
-                    distancia_total=distancia,
-                    tiempo_total=tiempo_total,
-                    costo_total=costo,
-                    factible=factible,
-                    productos_entregados=productos_ruta,
-                    tiempos_llegada=tiempos_llegada
-                )
-                
+                ruta_obj = self.evaluator.crear_ruta_objeto(ruta_actual, cisterna, productos_ruta)
                 rutas.append(ruta_obj)
-                # Incrementar contador de vehículos usados
                 vehiculos_usados[cisterna.tipo] += 1
                 
-                # Actualizar clientes no asignados y demandas pendientes
+                # Actualizar estado
                 for cliente_id, productos in productos_ruta.items():
                     if 'G' in productos:
                         demandas_pendientes[cliente_id]['G'] = False
                     if 'D' in productos:
                         demandas_pendientes[cliente_id]['D'] = False
                     
-                    # Si el cliente no tiene más demandas, removerlo
-                    if not demandas_pendientes[cliente_id]['G'] and \
-                       not demandas_pendientes[cliente_id]['D']:
+                    if not any(demandas_pendientes[cliente_id].values()):
                         clientes_no_asignados.discard(cliente_id)
             else:
-                # No se pudo construir ruta, problema infactible
-                raise ValueError(
-                    f"No se pudo asignar clientes restantes: {clientes_no_asignados}. "
-                    f"Vehículos usados: Tipo 1: {vehiculos_usados[1]}/{num_vehiculos_por_tipo}, "
-                    f"Tipo 2: {vehiculos_usados[2]}/{num_vehiculos_por_tipo}"
-                )
+                raise ValueError(f"No se pudo asignar clientes restantes: {clientes_no_asignados}")
         
         print(f"\n>>> Vehículos utilizados en Forward Sweep:")
-        print(f"  * Tipo 1: {vehiculos_usados[1]}/{num_vehiculos_por_tipo}")
-        print(f"  * Tipo 2: {vehiculos_usados[2]}/{num_vehiculos_por_tipo}")
+        print(f"  * Tipo 1: {vehiculos_usados[1]}/{self.instance.num_vehiculos_por_tipo}")
+        print(f"  * Tipo 2: {vehiculos_usados[2]}/{self.instance.num_vehiculos_por_tipo}")
         
         return rutas
     
     def _calcular_score_eliminacion(self, cliente_id: int, avg_radius: float) -> float:
-        """
-        Calcula el score para seleccionar el cliente a eliminar de una ruta.
-        Score menor = mejor candidato a eliminar (cercano al depot y al siguiente segmento angular).
-        
-        Args:
-            cliente_id: ID del cliente
-            avg_radius: Radio promedio de todos los clientes
-        
-        Returns:
-            Score de eliminación: R(I) + An(I) * AVR
-        """
-        cliente = self.clientes[cliente_id - 1]
+        """Score para seleccionar cliente a eliminar: R(I) + An(I) * AVR."""
+        cliente = self.instance.cliente_por_id(cliente_id)
         return cliente.radio + cliente.angulo * avg_radius
     
     def _seleccionar_cliente_a_eliminar(self, ruta: Ruta, avg_radius: float) -> Optional[int]:
-        """
-        Selecciona el cliente de la ruta que minimiza R + AN * avg_radius.
-        
-        Args:
-            ruta: Ruta de la cual eliminar un cliente
-            avg_radius: Radio promedio de todos los clientes
-        
-        Returns:
-            ID del cliente a eliminar o None si la ruta está vacía
-        """
+        """Selecciona el cliente de la ruta que minimiza el score de eliminación."""
         if not ruta.clientes:
             return None
         
-        mejor_cliente = None
-        mejor_score = float('inf')
-        
-        for cliente_id in ruta.clientes:
-            score = self._calcular_score_eliminacion(cliente_id, avg_radius)
-            if score < mejor_score:
-                mejor_score = score
-                mejor_cliente = cliente_id
-        
-        return mejor_cliente
+        return min(ruta.clientes, 
+                  key=lambda cid: self._calcular_score_eliminacion(cid, avg_radius))
     
     def _obtener_candidatos_ordenados(self, ruta_k: Ruta, ruta_k_plus_1: Ruta) -> List[int]:
-        """
-        Obtiene los clientes de K+1 ordenados por cercanía al último cliente de K.
-        
-        Args:
-            ruta_k: Ruta actual
-            ruta_k_plus_1: Ruta siguiente
-        
-        Returns:
-            Lista de IDs de clientes ordenados por distancia
-        """
+        """Obtiene clientes de K+1 ordenados por cercanía al último cliente de K."""
         if not ruta_k.clientes or not ruta_k_plus_1.clientes:
             return []
         
         ultimo_cliente_k = ruta_k.clientes[-1]
-        return sorted(
-            ruta_k_plus_1.clientes,
-            key=lambda c: self.distancia(ultimo_cliente_k, c)
-        )
+        return sorted(ruta_k_plus_1.clientes,
+                     key=lambda c: self.instance.distancia(ultimo_cliente_k, c))
     
-    def _intentar_insercion_greedy(self, base_clientes: List[int], clientes_a_insertar: List[int], ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
-        """
-        Intenta insertar clientes en la ruta base usando estrategia greedy.
-        
-        Args:
-            base_clientes: Lista base de clientes
-            clientes_a_insertar: Clientes a intentar insertar
-            ruta_k: Ruta K original
-            ruta_k_plus_1: Ruta K+1 original
-            vehiculos_disponibles: Contador de vehículos disponibles por tipo
-        
-        Returns:
-            Tupla (nueva_ruta, cisterna, info, costo) o None si no es factible
-        """
+    def _intentar_insercion_greedy(self, base_clientes: List[int], 
+                                  clientes_a_insertar: List[int], 
+                                  ruta_k: Ruta, ruta_k_plus_1: Ruta, 
+                                  vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
+        """Inserta clientes en la ruta base usando estrategia greedy."""
         ruta_actual = base_clientes[:]
         cisterna_actual = None
         info_actual = None
@@ -706,7 +676,7 @@ class SweepAlgorithm:
             )
             
             if mejor_insercion is None:
-                return None  # No se puede insertar este cliente
+                return None
             
             pos, cisterna, info, costo = mejor_insercion
             ruta_actual = ruta_actual[:pos] + [cliente_id] + ruta_actual[pos:]
@@ -716,13 +686,11 @@ class SweepAlgorithm:
         
         return (ruta_actual, cisterna_actual, info_actual, costo_actual)
     
-    def _encontrar_mejor_posicion_insercion(self, ruta_actual: List[int], cliente_id: int, ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[int, Cisterna, Dict, float]]:
-        """
-        Encuentra la mejor posición para insertar un cliente en una ruta.
-        
-        Returns:
-            Tupla (posicion, cisterna, info, costo) o None si no hay posición factible
-        """
+    def _encontrar_mejor_posicion_insercion(self, ruta_actual: List[int], 
+                                           cliente_id: int, 
+                                           ruta_k: Ruta, ruta_k_plus_1: Ruta, 
+                                           vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[int, Cisterna, Dict, float]]:
+        """Encuentra la mejor posición para insertar un cliente en una ruta."""
         mejor_pos, mejor_costo = None, float('inf')
         mejor_cisterna, mejor_info = None, None
         
@@ -730,15 +698,19 @@ class SweepAlgorithm:
             tentativa = ruta_actual[:pos] + [cliente_id] + ruta_actual[pos:]
             productos = build_product_map(tentativa, ruta_k, ruta_k_plus_1)
             
-            cisterna = self.seleccionar_mejor_cisterna(tentativa, productos, vehiculos_disponibles)
+            cisterna = self.evaluator.seleccionar_mejor_cisterna(
+                tentativa, productos, vehiculos_disponibles
+            )
             if cisterna is None:
                 continue
             
-            factible, _, info = self.verificar_factibilidad_ruta(tentativa, cisterna, productos)
+            factible, _, info = self.evaluator.verificar_factibilidad_ruta(
+                tentativa, cisterna, productos
+            )
             if not factible:
                 continue
             
-            distancia = self.calcular_distancia_ruta(tentativa)
+            distancia = self.evaluator.calcular_distancia_ruta(tentativa)
             costo = cisterna.costo_fijo + cisterna.costo_km * distancia
             
             if costo < mejor_costo:
@@ -747,18 +719,13 @@ class SweepAlgorithm:
                 mejor_cisterna = cisterna
                 mejor_info = info
         
-        if mejor_pos is None:
-            return None
-        
-        return (mejor_pos, mejor_cisterna, mejor_info, mejor_costo)
+        return (mejor_pos, mejor_cisterna, mejor_info, mejor_costo) if mejor_pos is not None else None
     
-    def _reconstruir_ruta_k_plus_1(self, base_clientes: List[int], cliente_a_insertar: int, ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
-        """
-        Reconstruye la ruta K+1 insertando un cliente eliminado de K.
-        
-        Returns:
-            Tupla (nueva_ruta, cisterna, info, costo) o None si no es factible
-        """
+    def _reconstruir_ruta_k_plus_1(self, base_clientes: List[int], 
+                                   cliente_a_insertar: int, 
+                                   ruta_k: Ruta, ruta_k_plus_1: Ruta, 
+                                   vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
+        """Reconstruye la ruta K+1 insertando un cliente eliminado de K."""
         mejor_pos, mejor_costo = None, float('inf')
         mejor_cisterna, mejor_info, mejor_ruta = None, None, None
         
@@ -766,15 +733,19 @@ class SweepAlgorithm:
             tentativa = base_clientes[:pos] + [cliente_a_insertar] + base_clientes[pos:]
             productos = build_product_map(tentativa, ruta_k, ruta_k_plus_1)
             
-            cisterna = self.seleccionar_mejor_cisterna(tentativa, productos, vehiculos_disponibles)
+            cisterna = self.evaluator.seleccionar_mejor_cisterna(
+                tentativa, productos, vehiculos_disponibles
+            )
             if cisterna is None:
                 continue
             
-            factible, _, info = self.verificar_factibilidad_ruta(tentativa, cisterna, productos)
+            factible, _, info = self.evaluator.verificar_factibilidad_ruta(
+                tentativa, cisterna, productos
+            )
             if not factible:
                 continue
             
-            distancia = self.calcular_distancia_ruta(tentativa)
+            distancia = self.evaluator.calcular_distancia_ruta(tentativa)
             costo = cisterna.costo_fijo + cisterna.costo_km * distancia
             
             if costo < mejor_costo:
@@ -784,19 +755,12 @@ class SweepAlgorithm:
                 mejor_info = info
                 mejor_ruta = tentativa
         
-        if mejor_pos is None:
-            return None
-        
-        return (mejor_ruta, mejor_cisterna, mejor_info, mejor_costo)
+        return (mejor_ruta, mejor_cisterna, mejor_info, mejor_costo) if mejor_pos is not None else None
     
-    def _buscar_mejor_intercambio(self, ruta_k: Ruta, ruta_k_plus_1: Ruta, cliente_eliminar: int, candidatos: List[int], vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, List[int], Cisterna, Dict, float]]:
-        """
-        Busca el mejor intercambio de clientes entre dos rutas consecutivas.
-        
-        Returns:
-            Tupla (nueva_K, cisterna_K, info_K, nueva_K1, cisterna_K1, info_K1, nuevo_costo)
-            o None si no hay intercambio factible que mejore el costo
-        """
+    def _buscar_mejor_intercambio(self, ruta_k: Ruta, ruta_k_plus_1: Ruta, 
+                                  cliente_eliminar: int, candidatos: List[int], 
+                                  vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, List[int], Cisterna, Dict, float]]:
+        """Busca el mejor intercambio de clientes entre dos rutas consecutivas."""
         base_k = [c for c in ruta_k.clientes if c != cliente_eliminar]
         costo_actual = ruta_k.costo_total + ruta_k_plus_1.costo_total
         
@@ -809,7 +773,6 @@ class SweepAlgorithm:
         for m in range(1, len(candidatos) + 1):
             prefijo = candidatos[:m]
             
-            # Reconstruir ruta K insertando prefijo
             resultado_k = self._intentar_insercion_greedy(
                 base_k, prefijo, ruta_k, ruta_k_plus_1, veh_temp
             )
@@ -819,11 +782,9 @@ class SweepAlgorithm:
             
             nueva_k, cisterna_k, info_k, costo_k = resultado_k
             
-            # Ocupar temporalmente el vehículo elegido para K
             veh_temp2 = veh_temp.copy()
             veh_temp2[cisterna_k.tipo] += 1
             
-            # Reconstruir ruta K+1 insertando cliente eliminado
             base_k1 = [c for c in ruta_k_plus_1.clientes if c not in prefijo]
             resultado_k1 = self._reconstruir_ruta_k_plus_1(
                 base_k1, cliente_eliminar, ruta_k, ruta_k_plus_1, veh_temp2
@@ -840,28 +801,15 @@ class SweepAlgorithm:
         
         return None
     
-    def _crear_ruta_desde_swap(self, clientes: List[int], cisterna: Cisterna, info: Dict, ruta_original_k: Ruta, ruta_original_k_plus_1: Ruta) -> Ruta:
-        """
-        Crea un objeto Ruta a partir del resultado de un intercambio.
-        """
-        tiempos_llegada = [info['tiempos_llegada'][cid] for cid in clientes]
+    def _crear_ruta_desde_swap(self, clientes: List[int], cisterna: Cisterna, 
+                               info: Dict, ruta_original_k: Ruta, 
+                               ruta_original_k_plus_1: Ruta) -> Ruta:
+        """Crea un objeto Ruta a partir del resultado de un intercambio."""
         productos = build_product_map(clientes, ruta_original_k, ruta_original_k_plus_1)
-        distancia = self.calcular_distancia_ruta(clientes)
-        
-        return Ruta(
-            cisterna=cisterna,
-            clientes=clientes,
-            carga_gasohol=info['carga_gasohol'],
-            carga_diesel=info['carga_diesel'],
-            distancia_total=distancia,
-            tiempo_total=info['tiempo_retorno'],
-            costo_total=cisterna.costo_fijo + cisterna.costo_km * distancia,
-            factible=True,
-            productos_entregados=productos,
-            tiempos_llegada=tiempos_llegada
-        )
+        return self.evaluator.crear_ruta_objeto(clientes, cisterna, productos)
 
-    def improving_sweep(self, rutas_candidatas: List[Ruta], clockwise: bool = False) -> Tuple[List[Ruta], bool]:
+    def improving_sweep(self, rutas_candidatas: List[Ruta], 
+                       clockwise: bool = False) -> Tuple[List[Ruta], bool]:
         """
         Implementa el algoritmo de mejora del Forward Angular Sweep.
 
@@ -875,7 +823,7 @@ class SweepAlgorithm:
         Returns:
             (rutas_mejoradas, hubo_mejora): Tupla con las rutas mejoradas y un flag indicando si hubo mejora
         """
-        avg_radius = np.mean([c.radio for c in self.clientes])
+        avg_radius = np.mean([c.radio for c in self.instance.clientes])
         
         rutas_mejoradas = copy.deepcopy(rutas_candidatas)
         if clockwise:
@@ -900,17 +848,14 @@ class SweepAlgorithm:
                     ruta_k_plus_1 = rutas_mejoradas[k + 1]
                     costo_actual = ruta_k.costo_total + ruta_k_plus_1.costo_total
 
-                    # 1) Seleccionar cliente a eliminar de K
                     cliente_eliminar = self._seleccionar_cliente_a_eliminar(ruta_k, avg_radius)
                     if cliente_eliminar is None:
                         break
 
-                    # 2) Obtener candidatos de K+1 ordenados por cercanía
                     candidatos = self._obtener_candidatos_ordenados(ruta_k, ruta_k_plus_1)
                     if not candidatos:
                         break
 
-                    # 3) Buscar mejor intercambio
                     mejor_swap = self._buscar_mejor_intercambio(
                         ruta_k, ruta_k_plus_1, cliente_eliminar, candidatos, vehiculos_usados
                     )
@@ -918,7 +863,6 @@ class SweepAlgorithm:
                     if mejor_swap is None:
                         break
 
-                    # 4) Aplicar mejora
                     nueva_k, cisterna_k, info_k, nueva_k1, cisterna_k1, info_k1, nuevo_costo = mejor_swap
 
                     nueva_ruta_k = self._crear_ruta_desde_swap(nueva_k, cisterna_k, info_k, ruta_k, ruta_k_plus_1)
@@ -930,7 +874,6 @@ class SweepAlgorithm:
                     vehiculos_usados[cisterna_k.tipo] += 1
                     vehiculos_usados[cisterna_k1.tipo] += 1
 
-                    # Commit
                     rutas_mejoradas[k] = nueva_ruta_k
                     rutas_mejoradas[k + 1] = nueva_ruta_k_plus_1
 
@@ -946,8 +889,8 @@ class SweepAlgorithm:
         direccion_str = "horario" if clockwise else "antihorario"
         print(f"\n>>> Proceso de mejora ({direccion_str}) completado en {iteracion} iteraciones.")
         print(f">>> Vehículos utilizados:")
-        print(f"  * Tipo 1: {vehiculos_usados[1]}/{num_vehiculos_por_tipo}")
-        print(f"  * Tipo 2: {vehiculos_usados[2]}/{num_vehiculos_por_tipo}")
+        print(f"  * Tipo 1: {vehiculos_usados[1]}/{self.instance.num_vehiculos_por_tipo}")
+        print(f"  * Tipo 2: {vehiculos_usados[2]}/{self.instance.num_vehiculos_por_tipo}")
 
         if clockwise:
             rutas_mejoradas = list(reversed(rutas_mejoradas))
@@ -969,6 +912,7 @@ class SweepAlgorithm:
         Returns:
             Lista de rutas mejoradas después de agotar ambas direcciones
         """
+
         rutas_actuales = rutas_candidatas
         mejora_global = True
         iteracion_global = 0
@@ -983,7 +927,7 @@ class SweepAlgorithm:
             
             print(f"\n>>> Iteración global {iteracion_global}")
             
-            # Intentar mejora en sentido antihorario (counterclockwise)
+            # Sentido antihorario
             print("\n  >>> Intentando mejora en sentido ANTIHORARIO...")
             rutas_ccw, mejora_ccw = self.improving_sweep(rutas_actuales, clockwise=False)
             
@@ -991,11 +935,11 @@ class SweepAlgorithm:
                 rutas_actuales = rutas_ccw
                 mejora_global = True
                 costo_actual = sum(r.costo_total for r in rutas_actuales)
-                print(f"  >>> Mejora encontrada en sentido antihorario. Costo actual: ${costo_actual:,.2f}")
+                print(f"  >>> Mejora encontrada. Costo actual: ${costo_actual:,.2f}")
             else:
-                print(f"  >>> No se encontraron mejoras en sentido antihorario")
+                print(f"  >>> Sin mejoras")
             
-            # Intentar mejora en sentido horario (clockwise)
+            # Sentido horario
             print("\n  >>> Intentando mejora en sentido HORARIO...")
             rutas_cw, mejora_cw = self.improving_sweep(rutas_actuales, clockwise=True)
             
@@ -1003,11 +947,10 @@ class SweepAlgorithm:
                 rutas_actuales = rutas_cw
                 mejora_global = True
                 costo_actual = sum(r.costo_total for r in rutas_actuales)
-                print(f"  >>> Mejora encontrada en sentido horario. Costo actual: ${costo_actual:,.2f}")
+                print(f"  >>> Mejora encontrada. Costo actual: ${costo_actual:,.2f}")
             else:
-                print(f"  >>> No se encontraron mejoras en sentido horario")
+                print(f"  >>> Sin mejoras")
             
-            # Si ninguna dirección produjo mejora, terminar
             if not mejora_ccw and not mejora_cw:
                 print(f"\n>>> No se encontraron más mejoras en ninguna dirección.")
                 mejora_global = False
@@ -1017,157 +960,6 @@ class SweepAlgorithm:
         print("="*80)
         
         return rutas_actuales
-    
-    # Utilities for output and visualization
-    def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
-        """Imprime la solución de forma legible."""
-        print("\n" + "=" * 80)
-        print("SOLUCIÓN - ANGULAR SWEEP ALGORITHM")
-        print("=" * 80)
-        
-        costo_total = sum(r.costo_total for r in rutas)
-        distancia_total = sum(r.distancia_total for r in rutas)
-        
-        # Contar vehículos por tipo
-        vehiculos_tipo_1 = sum(1 for r in rutas if r.cisterna.tipo == 1)
-        vehiculos_tipo_2 = sum(1 for r in rutas if r.cisterna.tipo == 2)
-        
-        if verbosity >= 1:
-            print(f"\n>>> RESUMEN GENERAL:")
-            print(f"  * Número de rutas: {len(rutas)}")
-            print(f"  * Costo total: ${costo_total:,.2f}")
-            print(f"  * Distancia total: {distancia_total:.2f} km")
-            print(f"  * Cisternas Tipo 1: {vehiculos_tipo_1}/{num_vehiculos_por_tipo}", end="")
-            if vehiculos_tipo_1 > num_vehiculos_por_tipo:
-                print(" !!! EXCEDE LÍMITE", end="")
-            print()
-            print(f"  * Cisternas Tipo 2: {vehiculos_tipo_2}/{num_vehiculos_por_tipo}", end="")
-            if vehiculos_tipo_2 > num_vehiculos_por_tipo:
-                print(" !!! EXCEDE LÍMITE", end="")
-            print()
-
-        if verbosity >= 2:    
-            print(f"\n>>> DETALLE DE RUTAS:")
-            for idx, ruta in enumerate(rutas, 1):
-                print(f"\n  Ruta #{idx}:")
-                print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
-                print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
-                print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
-                    f"Diésel={ruta.carga_diesel:.0f}gal ({ruta.carga_diesel/ruta.cisterna.cap_diesel*100:.1f}%)")
-                print(f"    Distancia: {ruta.distancia_total:.2f} km")
-                print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
-                print(f"    Costo: ${ruta.costo_total:,.2f}")
-                print(f"    Tiempos de llegada (min desde 04:00):")
-                for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
-                    hora = 4 + tiempo_llegada // 60
-                    minuto = tiempo_llegada % 60
-                    cliente = self.clientes[cliente_id - 1]
-                    ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
-                    print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
-                print(f"    Entregas por cliente:")
-                for cliente_id, productos in ruta.productos_entregados.items():
-                    prods_str = ", ".join(productos)
-                    print(f"      - Cliente {cliente_id}: {prods_str}")
-            
-        print("\n" + "="*80)
-
-    def visualizar_rutas(self, rutas: List[Ruta]):
-        """
-        Visualiza las rutas generadas en un mapa.
-        
-        Args:
-            rutas: Lista de rutas a visualizar
-        """
-        # Definir colores para las rutas (ciclo de colores si hay más de 10 rutas)
-        colores_base = [
-            '#FF6B6B', '#FFA07A', '#98D8C8', '#F7DC6F', 
-            '#45B7D1', '#BB8FCE', '#F8B739', '#85C1E2',
-            '#E63946', '#06FFA5', '#A8DADC', '#FF006E', 
-            '#FB5607', '#3A86FF', '#FFBE0B', '#06D6A0', 
-            '#EF476F', '#8338EC', '#4ECDC4', '#52B788',
-            '#118AB2', '#FFD166', '#D62828', '#F77F00',
-            '#2EC4B6', '#E71D36', '#011627', '#C9ADA7'
-        ]
-        
-        fig, ax = plt.subplots(figsize=(12, 9))
-        
-        # Dibujar depot
-        ax.scatter(self.depot.x, self.depot.y, s=300, c='red', marker='s', 
-                  label='Depósito', zorder=5, edgecolors='black', linewidth=2)
-        ax.text(self.depot.x + 0.75, self.depot.y + 0.75, 'DEPOT', 
-               fontsize=10, fontweight='bold')
-        
-        # Dibujar clientes
-        clientes_x = [c.x for c in self.clientes]
-        clientes_y = [c.y for c in self.clientes]
-        ax.scatter(clientes_x, clientes_y, s=150, c='lightblue', 
-                  label='Clientes', zorder=4, edgecolors='black', linewidth=1)
-        
-        # Etiquetar clientes
-        for cliente in self.clientes:
-            ax.text(cliente.x + 0.75, cliente.y + 0.75, str(cliente.id), 
-                   fontsize=9)
-        
-        # Dibujar rutas
-        legend_elements = []
-        
-        for idx, ruta in enumerate(rutas):
-            color = colores_base[idx % len(colores_base)]
-            
-            # Construir la secuencia completa: Depot -> clientes -> Depot
-            secuencia = [0] + ruta.clientes + [0]
-            
-            # Obtener coordenadas
-            x_coords = []
-            y_coords = []
-            for nodo in secuencia:
-                if nodo == 0:
-                    x_coords.append(self.depot.x)
-                    y_coords.append(self.depot.y)
-                else:
-                    cliente = self.clientes[nodo - 1]
-                    x_coords.append(cliente.x)
-                    y_coords.append(cliente.y)
-            
-            # Dibujar la ruta
-            ax.plot(x_coords, y_coords, color=color, linewidth=2, 
-                   alpha=0.7, zorder=3)
-            
-            # Agregar flechas para indicar dirección
-            for i in range(len(x_coords) - 1):
-                dx = x_coords[i+1] - x_coords[i]
-                dy = y_coords[i+1] - y_coords[i]
-                # Dibujar flecha en el punto medio de cada segmento
-                mid_x = x_coords[i] + dx * 0.5
-                mid_y = y_coords[i] + dy * 0.5
-                ax.annotate('', xy=(mid_x + dx*0.1, mid_y + dy*0.1), 
-                          xytext=(mid_x - dx*0.1, mid_y - dy*0.1),
-                          arrowprops=dict(arrowstyle='->', color=color, 
-                                        lw=1.5, alpha=0.8))
-            
-            # Crear etiqueta para la leyenda
-            tipo_str = f"Tipo {ruta.cisterna.tipo}"
-            costo_str = f"${ruta.costo_total:.0f}"
-            dist_str = f"{ruta.distancia_total:.1f}km"
-            legend_elements.append(
-                mpatches.Patch(color=color, 
-                              label=f"Ruta {idx+1}: {tipo_str} | {dist_str} | {costo_str}")
-            )
-        
-        # Configurar el gráfico
-        ax.set_xlabel('Coordenada X (km)', fontsize=11)
-        ax.set_ylabel('Coordenada Y (km)', fontsize=11)
-        ax.set_title('Visualización de Rutas - Angular Sweep Algorithm', 
-                    fontsize=14, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal', adjustable='box')
-        
-        # Agregar leyenda
-        ax.legend(handles=legend_elements, loc='upper left', 
-                 bbox_to_anchor=(1.02, 1), fontsize=9, framealpha=0.9)
-        
-        plt.tight_layout()
-        plt.show()
 
 
 class SolverTabuSearchMCVRPTW:
@@ -1231,16 +1023,159 @@ class SolverTabuSearchMCVRPTW:
         return rutas
 
 
-def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bool = False, I: int = 1000, split_demands: bool = False,
-                        velocidad: float = 60, tiempo_descarga: float = 5) -> List[Ruta]:
-    """
-    Implementing and adapting ideas from Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem' for the MCVRP with Time Windows
+# -----------------------------------------------------------------------------
+# Solution Visualization
+# -----------------------------------------------------------------------------
 
-    Pseudo-code:
+class SolutionVisualizer:
+    """Visualiza y reporta soluciones."""
+    
+    def __init__(self, instance: ProblemInstance):
+        self.instance = instance
+    
+    def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
+        """Imprime la solución de forma legible."""
+        print("\n" + "=" * 80)
+        print("SOLUCIÓN - ANGULAR SWEEP ALGORITHM")
+        print("=" * 80)
+        
+        costo_total = sum(r.costo_total for r in rutas)
+        distancia_total = sum(r.distancia_total for r in rutas)
+        
+        vehiculos_tipo_1 = sum(1 for r in rutas if r.cisterna.tipo == 1)
+        vehiculos_tipo_2 = sum(1 for r in rutas if r.cisterna.tipo == 2)
+        
+        if verbosity >= 1:
+            print(f"\n>>> RESUMEN GENERAL:")
+            print(f"  * Número de rutas: {len(rutas)}")
+            print(f"  * Costo total: ${costo_total:,.2f}")
+            print(f"  * Distancia total: {distancia_total:.2f} km")
+            print(f"  * Cisternas Tipo 1: {vehiculos_tipo_1}/{self.instance.num_vehiculos_por_tipo}", end="")
+            if vehiculos_tipo_1 > self.instance.num_vehiculos_por_tipo:
+                print(" !!! EXCEDE LÍMITE", end="")
+            print()
+            print(f"  * Cisternas Tipo 2: {vehiculos_tipo_2}/{self.instance.num_vehiculos_por_tipo}", end="")
+            if vehiculos_tipo_2 > self.instance.num_vehiculos_por_tipo:
+                print(" !!! EXCEDE LÍMITE", end="")
+            print()
+
+        if verbosity >= 2:    
+            print(f"\n>>> DETALLE DE RUTAS:")
+            for idx, ruta in enumerate(rutas, 1):
+                print(f"\n  Ruta #{idx}:")
+                print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
+                print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
+                print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
+                    f"Diésel={ruta.carga_diesel:.0f}gal ({ruta.carga_diesel/ruta.cisterna.cap_diesel*100:.1f}%)")
+                print(f"    Distancia: {ruta.distancia_total:.2f} km")
+                print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
+                print(f"    Costo: ${ruta.costo_total:,.2f}")
+                print(f"    Tiempos de llegada (min desde 04:00):")
+                for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
+                    hora = 4 + tiempo_llegada // 60
+                    minuto = tiempo_llegada % 60
+                    cliente = self.instance.cliente_por_id(cliente_id)
+                    ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
+                    print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
+                print(f"    Entregas por cliente:")
+                for cliente_id, productos in ruta.productos_entregados.items():
+                    prods_str = ", ".join(productos)
+                    print(f"      - Cliente {cliente_id}: {prods_str}")
+            
+        print("\n" + "="*80)
+
+    def visualizar_rutas(self, rutas: List[Ruta]):
+        """Visualiza las rutas en un mapa 2D."""
+        colores_base = [
+            '#FF6B6B', '#FFA07A', '#98D8C8', '#F7DC6F', 
+            '#45B7D1', '#BB8FCE', '#F8B739', '#85C1E2',
+            '#E63946', '#06FFA5', '#A8DADC', '#FF006E', 
+            '#FB5607', '#3A86FF', '#FFBE0B', '#06D6A0', 
+            '#EF476F', '#8338EC', '#4ECDC4', '#52B788',
+            '#118AB2', '#FFD166', '#D62828', '#F77F00',
+            '#2EC4B6', '#E71D36', '#011627', '#C9ADA7'
+        ]
+        
+        fig, ax = plt.subplots(figsize=(12, 9))
+        
+        # Dibujar depot
+        ax.scatter(self.instance.depot.x, self.instance.depot.y, s=300, c='red', marker='s', 
+                  label='Depósito', zorder=5, edgecolors='black', linewidth=2)
+        ax.text(self.instance.depot.x + 0.75, self.instance.depot.y + 0.75, 'DEPOT', 
+               fontsize=10, fontweight='bold')
+        
+        # Dibujar clientes
+        clientes_x = [c.x for c in self.instance.clientes]
+        clientes_y = [c.y for c in self.instance.clientes]
+        ax.scatter(clientes_x, clientes_y, s=150, c='lightblue', 
+                  label='Clientes', zorder=4, edgecolors='black', linewidth=1)
+        
+        for cliente in self.instance.clientes:
+            ax.text(cliente.x + 0.75, cliente.y + 0.75, str(cliente.id), fontsize=9)
+        
+        # Dibujar rutas
+        legend_elements = []
+        
+        for idx, ruta in enumerate(rutas):
+            color = colores_base[idx % len(colores_base)]
+            secuencia = [0] + ruta.clientes + [0]
+            
+            x_coords = []
+            y_coords = []
+            for nodo in secuencia:
+                cliente = self.instance.cliente_por_id(nodo)
+                x_coords.append(cliente.x)
+                y_coords.append(cliente.y)
+            
+            ax.plot(x_coords, y_coords, color=color, linewidth=2, alpha=0.7, zorder=3)
+            
+            # Flechas de dirección
+            for i in range(len(x_coords) - 1):
+                dx = x_coords[i+1] - x_coords[i]
+                dy = y_coords[i+1] - y_coords[i]
+                mid_x = x_coords[i] + dx * 0.5
+                mid_y = y_coords[i] + dy * 0.5
+                ax.annotate('', xy=(mid_x + dx*0.1, mid_y + dy*0.1), 
+                          xytext=(mid_x - dx*0.1, mid_y - dy*0.1),
+                          arrowprops=dict(arrowstyle='->', color=color, lw=1.5, alpha=0.8))
+            
+            tipo_str = f"Tipo {ruta.cisterna.tipo}"
+            costo_str = f"${ruta.costo_total:.0f}"
+            dist_str = f"{ruta.distancia_total:.1f}km"
+            legend_elements.append(
+                mpatches.Patch(color=color, 
+                              label=f"Ruta {idx+1}: {tipo_str} | {dist_str} | {costo_str}")
+            )
+        
+        ax.set_xlabel('Coordenada X (km)', fontsize=11)
+        ax.set_ylabel('Coordenada Y (km)', fontsize=11)
+        ax.set_title('Visualización de Rutas - Angular Sweep Algorithm', 
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal', adjustable='box')
+        ax.legend(handles=legend_elements, loc='upper left', 
+                 bbox_to_anchor=(1.02, 1), fontsize=9, framealpha=0.9)
+        
+        plt.tight_layout()
+        plt.show()
+
+
+def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, 
+                       clockwise: bool = False, I: int = 1000, 
+                       split_demands: bool = False,
+                       num_vehiculos_por_tipo: int = 20,
+                       velocidad: float = 60, 
+                       tiempo_descarga: float = 5) -> List[Ruta]:
+    """
+    Iterated Tabu Search para MCVRPTW.
+    
+    Basado en Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem'
+    
+    Pseudo-código:
         function ITS()
             s <- SweepConstruction()
             s <- TabuSearch(s)
-            for i = 1 , ...., I iterations do
+            for i = 1, ..., I iterations do
                 s' <- Perturb(s)
                 s <- TabuSearch(s')
                 with probability (i / I)^2: s <- s'
@@ -1254,24 +1189,29 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bo
     if split_demands:
         df_input = split_client_demands(df_input)
 
-    sweep_solver = SweepAlgorithm(df_input, tipos_cisternas, velocidad, tiempo_descarga)
+    instance = ProblemInstance(
+        df_input, tipos_cisternas, num_vehiculos_por_tipo, 
+        velocidad, tiempo_descarga
+    )
+    visualizer = SolutionVisualizer(instance)
     
-    # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
-
-    # Greedy construction
+    sweep_solver = SweepAlgorithm(instance)
+    
+    # Construcción inicial con Angular Sweep
     rutas = sweep_solver.forward_sweep()
-    sweep_solver.imprimir_solucion(rutas, 1)
-    sweep_solver.visualizar_rutas(rutas)
+    visualizer.imprimir_solucion(rutas, 1)
+    visualizer.visualizar_rutas(rutas)
 
-    # "2-opt" type improvement clockwise and counterclockwise
+    # Mejora con "2-opt" bidireccional
     rutas = sweep_solver.iterative_improving_sweep(rutas)
-    sweep_solver.imprimir_solucion(rutas, 1)
-    sweep_solver.visualizar_rutas(rutas)
+    visualizer.imprimir_solucion(rutas, 1)
+    visualizer.visualizar_rutas(rutas)
 
-    # Tabu Search main loop
-    tabu_solver = SolverTabuSearchMCVRPTW(sweep_solver)
+    # Iterated Tabu Search
+    tabu_solver = SolverTabuSearchMCVRPTW(instance)
     best_solution = rutas
     best_cost = sum(r.costo_total for r in best_solution)
+
     for iteration in range(1, I + 1):
         rutas_perturbadas = tabu_solver.perturbation(rutas)
         rutas = tabu_solver.tabu_search(rutas_perturbadas, iteration)
@@ -1284,9 +1224,9 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bo
         if current_cost < best_cost:
             best_solution = rutas
             best_cost = current_cost
-            print(f"  [Iteración {iteration}] Nueva mejor solución encontrada: ${best_cost:,.2f}")
+            print(f"  [Iteración {iteration}] Nueva mejor solución: ${best_cost:,.2f}")
     
-    return rutas
+    return best_solution
 
 
 rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas, False)
