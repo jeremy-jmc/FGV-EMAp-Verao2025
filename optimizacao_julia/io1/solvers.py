@@ -516,6 +516,18 @@ class SweepAlgorithm:
         Considera reemplazar un cliente en la ruta K con uno o más clientes de la ruta K+1.
         Un reemplazo se realiza solo si reduce el costo y ambas rutas permanecen factibles.
 
+            The procedure to modify consider replacing one location in route K with one or more locations in route K + 1 for K = 1, 2, ..., m - 1, where m is the number of routes formed.
+            A replacement is made only if the cost of the two routes after the replacement is less than the cost before the replacement and both routes remain feasible after the replacement.
+
+            The location to be deleted from route K is obtained by minimizing a function of the radius R(I) and the angle An(I) of each location in route K.
+            This provides a location that is close to the depot and also close to the next route. A function that works very well is R(I) + An(I) * AVR (Average Radius among all locations).
+
+            The first location, say location p, that is considered for inclusion in route K is the location in route K + 1 that is nearest to the last location that was added to route K. 
+            The second location considered for inclusion in route K is the location in route K + 1 that is nearest to location p.
+            If one or more locations are added to route K by this scheme, then the next location in route K + 1 is also checked to see if it can be included in route K.
+            
+            The process of adding one or more locations to route K and deleting another location continues until no further improvement is found.
+
         Args:
             rutas_iniciales: Lista de rutas iniciales
             clockwise: Si True, procesa las rutas en orden inverso (sentido horario)
@@ -601,10 +613,7 @@ class SweepAlgorithm:
         """
         Ejecuta improving_sweep alternando entre sentido antihorario y horario hasta que ambas direcciones no produzcan mejoras.
         
-        Según Gillett & Miller (1974): "The X and Y axes are then rotated counterclockwise 
-        or in the first location (counterclockwise is to the left). The procedure is then 
-        repeated. The process of rotating the X and Y axes is continued until all 
-        possibilities have been exhausted."
+        Según Gillett & Miller (1974): "The X and Y axes are then rotated counterclockwise or in the first location (counterclockwise is to the left). The procedure is then  repeated. The process of rotating the X and Y axes is continued until all possibilities have been exhausted."
         
         Args:
             rutas_iniciales: Lista de rutas iniciales del forward_sweep
@@ -695,7 +704,10 @@ class SolverTabuSearchMCVRPTW:
         pi = random.uniform(0, math.sqrt(self.sweep.n))
         return rutas
     
-    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, gamma: float = 1.0) -> List[Ruta]:
+    def _best_shift_move(self, rutas: List[Ruta], zeta: float):
+        return rutas
+
+    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, rho: float = 1.0) -> List[Ruta]:
         """
         The performance of the tabu search depends on the neighborhood structure, the handling of infeasible solutions, and the design of the short-term memory.
 
@@ -718,11 +730,14 @@ class SolverTabuSearchMCVRPTW:
         $$F(s) = d(s) + alpha C^+(s) + beta D^+(s)$$
 
         where $alpha$ and $beta$ are penalties for each unit of capacity and time excess respectively. Initially, $alpha = beta = 0$.
-        We will set $gamma$ as the penalty for each unit of time window violation.
+        We will set $rho$ as the penalty for each unit of time window violation.
 
         The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
         Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
         """
+        gamma, zeta = random.random(), random.random()
+
+        rutas = self._best_shift_move(rutas, zeta)
 
         return rutas
 
