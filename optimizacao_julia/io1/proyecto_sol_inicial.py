@@ -74,8 +74,8 @@ from IPython.display import display
 from typing import List, Dict
 import random
 
-from models import ProblemInstance, Ruta
-from solvers import SweepAlgorithm, SolverTabuSearchMCVRPTW, SolutionVisualizer
+from models import ProblemInstance, Ruta, SolutionVisualizer
+from solvers import SweepAlgorithm, SolverTabuSearchMCVRPTW
 
 pd.set_option('display.float_format', lambda x: '%.2f' % x)
 np.set_printoptions(precision=2, suppress=True)
