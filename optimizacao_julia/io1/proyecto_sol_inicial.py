@@ -253,34 +253,7 @@ def build_product_map(clientes_list: List[int], route_k: Ruta, route_k_plus_1: R
     return m
 
 
-class SweepAlgorithm:
-    """
-    Implementación del algoritmo Angular Sweep de Gillett & Miller (1974) adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
-    'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
-
-        The problem is to determine the number of routes and the paths in each rout that will minimize the total distance traveled by all vehicles in supplying all demands, subject to the lead and distance constraints on each vehicle.
-
-        The distance, constraint could be replaced by a time constraint without changing the problem.
-
-        The sweep algorithm divides the locations into a number of routes and then operates on the individual routes unitl an optimum or near-optimum solution is obtained.
-
-        The vehicle-dispatch problem is to minimize the total distance traveled supplying all demands while satisfying all constraints
-
-        The sweep algorithm consists of two parts: a forward sweep and a backward sweep.
-
-            In the forward-sweep algorithm, the locations are partitioned into routes beginning with the location that has the smallest angle, namely, location 1. 
-            Recall that the locations were renumbered according to the size of their polar-coordinate angle and the depot is location 0. 
-            The first route consists of locations 1, 2, ..., I, where I is the last location that can be added without exceeding the vehicle capacity or distance constraint. 
-            The second route contains locations J+1, J+2, ..., L, where L is the last location that can be added to the second route without exceeding the vehicle capacity or distance constraint. 
-            The remaining routes are formed in the same manner. 
-            The total distance traveled then is just the sum of distances for each route.
-
-        Then, a 2-opt type of improvement procedure is applied to the set of routes obtained from the forward sweep. 
-        The procedure to modify consider replacing one location in route K with one or more locations in route K + 1
-        This improvement process is continued both in the clockwise and counterclockwise directions until no further improvement is possible.
-
-        The backward-sweep algorithm is similar to the forward-sweep algorithm except that the locations are considered in the reverse order.
-    """
+class SolverTabuSearchMCVRPTW:
     
     def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, tiempo_descarga: float = 5, M: float = 10000):
         """
@@ -477,10 +450,34 @@ class SweepAlgorithm:
     
     def forward_sweep(self) -> List[Ruta]:
         """
-        Implementa el algoritmo Forward Sweep.
-        
-        Particiona los clientes en rutas comenzando desde el cliente con menor ángulo,
-        agregando clientes mientras se respeten las restricciones de capacidad y tiempo.
+        Algoritmo Forward Sweep.
+        Particiona los clientes en rutas comenzando desde el cliente con menor ángulo, agregando clientes mientras se respeten las restricciones de capacidad y tiempo.
+
+        Implementación del algoritmo Angular Sweep de Gillett & Miller (1974) adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
+            'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
+
+                The problem is to determine the number of routes and the paths in each rout that will minimize the total distance traveled by all vehicles in supplying all demands, subject to the lead and distance constraints on each vehicle.
+
+                The distance, constraint could be replaced by a time constraint without changing the problem.
+
+                The sweep algorithm divides the locations into a number of routes and then operates on the individual routes unitl an optimum or near-optimum solution is obtained.
+
+                The vehicle-dispatch problem is to minimize the total distance traveled supplying all demands while satisfying all constraints
+
+                The sweep algorithm consists of two parts: a forward sweep and a backward sweep.
+
+                    In the forward-sweep algorithm, the locations are partitioned into routes beginning with the location that has the smallest angle, namely, location 1. 
+                    Recall that the locations were renumbered according to the size of their polar-coordinate angle and the depot is location 0. 
+                    The first route consists of locations 1, 2, ..., I, where I is the last location that can be added without exceeding the vehicle capacity or distance constraint. 
+                    The second route contains locations J+1, J+2, ..., L, where L is the last location that can be added to the second route without exceeding the vehicle capacity or distance constraint. 
+                    The remaining routes are formed in the same manner. 
+                    The total distance traveled then is just the sum of distances for each route.
+
+                Then, a 2-opt type of improvement procedure is applied to the set of routes obtained from the forward sweep. 
+                The procedure to modify consider replacing one location in route K with one or more locations in route K + 1
+                This improvement process is continued both in the clockwise and counterclockwise directions until no further improvement is possible.
+
+                The backward-sweep algorithm is similar to the forward-sweep algorithm except that the locations are considered in the reverse order.
         
         Returns:
             Lista de rutas generadas
@@ -1050,6 +1047,8 @@ class SweepAlgorithm:
         
         return rutas_actuales
 
+
+    # Utilities for output and visualization
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
         """Imprime la solución de forma legible."""
         print("\n" + "=" * 80)
@@ -1211,16 +1210,21 @@ def tabu_search_mcvrptw(
     """
     Implementing and adapting ideas from Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem' for the MCVRP with Time Windows
     """    
-    # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
-    solver = SweepAlgorithm(data, tipos_cisternas, velocidad, tiempo_descarga)
+    solver = SolverTabuSearchMCVRPTW(data, tipos_cisternas, velocidad, tiempo_descarga)
     
+    # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
+
+    # Greedy construction
     rutas = solver.forward_sweep()
     solver.imprimir_solucion(rutas, 1)
     solver.visualizar_rutas(rutas)
 
+    # "2-opt" type improvement clockwise and counterclockwise
     rutas = solver.iterative_improving_sweep(rutas)
     solver.imprimir_solucion(rutas, 1)
     solver.visualizar_rutas(rutas)
+
+    # Tabu Search main loop
     
     return rutas
 
