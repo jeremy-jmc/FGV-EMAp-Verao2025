@@ -695,6 +695,9 @@ class SolverTabuSearchMCVRPTW:
         """
         self.sweep = sweep_solver
         self.best_solution = copy.deepcopy(sweep_solver.best_solution)
+        self.alpha = 1.0
+        self.betha = 1.0
+        self.rho = 1.0
     
     def _build_p_neighborhoods(self, clientes: List[int], p: int) -> Dict[int, List[int]]:
         """Construye p-vecindarios para cada cliente basado en distancias."""
@@ -1050,10 +1053,13 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas_perturbadas
     
-    def _best_shift_move(self, rutas: List[Ruta], zeta: float):
+    def _best_shift_move(self, rutas: List[Ruta]):
         return rutas
 
-    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, rho: float = 1.0) -> List[Ruta]:
+    def _update_penalties(self, factor: float):
+        return
+
+    def tabu_search(self, rutas: List[Ruta], iteration: int) -> List[Ruta]:
         """
         The performance of the tabu search depends on the neighborhood structure, the handling of infeasible solutions, and the design of the short-term memory.
 
@@ -1073,20 +1079,40 @@ class SolverTabuSearchMCVRPTW:
 
         The objective value of solution $s$ is then:
 
-        $$F(s) = d(s) + alpha C^+(s) + beta D^+(s)$$
+        $$F(s) = d(s) + alpha C^+(s) + beta D^+(s) + rho TW^+(s)$$
 
         where $alpha$ and $beta$ are penalties for each unit of capacity and time excess respectively. Initially, $alpha = beta = 0$.
         We will set $rho$ as the penalty for each unit of time window violation.
 
         The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
-        Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
+        Every time the current solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
 
         Neighbourhood and Tabu List:
-        Diversification:
-        """
-        gamma, zeta = random.random(), random.random()
+            The neighborhood is defined by of a single kind of move: relocating a non-empty subset of demands of a visit to another route.
+            A move is defined by a tuple (s, d, v, p), where s is the source route, d is the destination route, `v in s` is a visit in the source route, and `p in P(v)` is an arbitrary non-empty subset of the demands attended by visit v.
 
-        rutas = self._best_shift_move(rutas, zeta)
+            If the subset `p` contains all demands, visit `v` is removed entirely from the source route `s`, and the GENI procedure is applied to optimize the source route.
+            Otherwise, the visit is split into two demands.
+            Demands P(v) \ p remain in visit `v` in the source route `s`, which does not need to be optimized. 
+            The selected demands `p` are inserted into the destination route `d`. 
+            If client V(v) does exist in the destination route, demands p(v) are simply added to the existing visits (checking the capacity and time constraints), and the route does not need to be optimized.
+            Otherwise, a new visit (v(V), p) is created and inserted into the destination route `d` using the GENI procedure.
+
+            A move is limited to insert the demands into a few nearest routes. A list of nearest routes is maintained for each client `i`.
+            Let `n_v` be the total number of visits of the current solution, and `d_hat = d(s) / n_v` be the average distance between visits.
+            Demands of client `i` are relocated only to routes contain have a visit at a distance at most `2d` from `i`. 
+            If the list of nearest routes is empty, then the distance is increased by 20% until it contains at least one destination route.
+
+            When a move is applied to the current solution, all solutions that have one of the demands in `p` of customer `V(v)` in the source route `s` are tabu for `tau` iterations.
+            The tabu tenure `tau` is randomly selected in `[1, sqrt(n*r_prime)]`, where `n` is the number of clients in the solution, and `r_prime` is the number of routes in the initial solution.
+            We use a single aspiration criterion: if a move is able to improve the incumbent it is performed even when tabu.
+        """
+        gamma = random.random()
+        r_prime = len(rutas)
+        thau = random.randint(1, int(math.sqrt(len(self.sweep.instance.clientes) * r_prime)))
+
+        rutas = self._best_shift_move(rutas)
+        self._update_penalties(factor=gamma)
 
         return rutas
 

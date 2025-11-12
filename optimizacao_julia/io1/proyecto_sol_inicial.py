@@ -143,7 +143,7 @@ def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 
 df = (
-    pd.read_csv('./instancias/50_clientes.csv')
+    pd.read_csv('./instancias/100_clientes.csv')
     .reset_index(drop=False)
 )
 
