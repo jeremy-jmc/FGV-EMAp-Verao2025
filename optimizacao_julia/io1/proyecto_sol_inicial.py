@@ -185,7 +185,7 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
                        split_demands: bool = False,
                        num_vehiculos_por_tipo: int = 20,
                        velocidad: float = 60, 
-                       tiempo_descarga: float = 5) -> List[Ruta]:
+                       tiempo_descarga: float = 5):
     """
     Iterated Tabu Search para MCVRPTW.
     
@@ -248,11 +248,15 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
     
     visualizer.imprimir_solucion(best_solution, 2)
     visualizer.visualizar_rutas(best_solution, "Perturbation Only")
-    return best_solution
+    return best_solution, best_cost
 
 
 # -----------------------------------------------------------------------------
 # Execute
 # -----------------------------------------------------------------------------
 
-rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=False, split_demands=False)
+for cc in [True, False]:
+    for sd in [True, False]:
+        print(f"\n--- Clockwise: {cc} | Split Demands: {sd} ---")
+        rutas_solucion, costo = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=False, split_demands=False)
+        print(f"Solución final con costo total: ${costo:,.2f}")
