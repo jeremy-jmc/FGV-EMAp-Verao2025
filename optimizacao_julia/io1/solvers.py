@@ -759,6 +759,61 @@ class SolverTabuSearchMCVRPTW:
             pass
         return None
     
+    def _try_type_ii_insertion(self, route_clients: List[int], v: int, v_i: int, 
+                               v_j: int, v_k: int, v_l: int, cisterna: Cisterna,
+                               productos_map: Dict[int, List[str]]) -> Optional[Tuple[List[int], float]]:
+        """
+        Intenta inserción Tipo II con path reversals más complejos.
+        
+        Constraints: v_k != v_j and v_k != v_j+1; v_l != v_i and v_l != v_i+1
+        """
+        try:
+            idx_i = route_clients.index(v_i)
+            idx_j = route_clients.index(v_j)
+            idx_k = route_clients.index(v_k)
+            idx_l = route_clients.index(v_l)
+            
+            # Validar constraints de posición para Type II
+            if not (idx_i < idx_l - 1):  # v_l not adjacent to v_i
+                return None
+            if not (idx_l <= idx_j):  # v_l before or at v_j
+                return None
+            if not (idx_j < idx_k - 1):  # v_k not adjacent to v_j
+                return None
+            
+            # Construir nueva ruta según Type II
+            # [... v_i] + [v] + [v_j ... v_l reversed] + [v_j+1 ... v_k-1] + [v_i+1 ... v_l-1 reversed] + [v_k ...]
+            new_route = route_clients[:idx_i+1]  # hasta v_i (inclusive)
+            new_route.append(v)  # insertar v
+            new_route.extend(reversed(route_clients[idx_l:idx_j+1]))  # revertir v_l...v_j
+            new_route.extend(route_clients[idx_j+1:idx_k])  # mantener v_j+1...v_k-1
+            new_route.extend(reversed(route_clients[idx_i+1:idx_l]))  # revertir v_i+1...v_l-1
+            new_route.extend(route_clients[idx_k:])  # resto desde v_k
+            
+            # Actualizar productos
+            new_productos = productos_map.copy()
+            cliente_v = self.sweep.instance.cliente_por_id(v)
+            new_productos[v] = []
+            if cliente_v.demanda_gasohol > 0:
+                new_productos[v].append('G')
+            if cliente_v.demanda_diesel > 0:
+                new_productos[v].append('D')
+            
+            # Validar factibilidad y calcular costo
+            factible, _, _ = self.sweep.evaluator.verificar_factibilidad_ruta(
+                new_route, cisterna, new_productos
+            )
+            if not factible:
+                return None
+            
+            distancia = self.sweep.evaluator.calcular_distancia_ruta(new_route)
+            costo = cisterna.costo_fijo + cisterna.costo_km * distancia
+            
+            return (new_route, costo)
+        except (ValueError, IndexError):
+            pass
+        return None
+    
     def _try_simple_insertion(self, route_clients: List[int], v: int, 
                              cisterna: Cisterna, productos_map: Dict[int, List[str]]) -> Optional[Tuple[List[int], int, float]]:
         """Inserción simple entre dos vértices consecutivos."""
@@ -846,33 +901,55 @@ class SolverTabuSearchMCVRPTW:
                 best_cost = simple[2]
                 best_route_idx = idx
             
-            # Intentar inserciones Tipo I solo con vecinos cercanos
-            if vertex_to_be_inserted in p_neighborhoods:
-                neighbors_v = p_neighborhoods.get(vertex_to_be_inserted, [])
+            # Intentar inserciones Tipo I y Tipo II solo con vecinos cercanos
+            neighbors_v = p_neighborhoods.get(vertex_to_be_inserted, [])
+            
+            for v_i in neighbors_v:
+                if v_i not in ruta.clientes:
+                    continue
+                    
+                neighbors_vi = p_neighborhoods.get(v_i, [])
                 
-                for v_i in neighbors_v:
-                    if v_i not in ruta.clientes:
+                for v_j in neighbors_v:
+                    if v_j not in ruta.clientes or v_i == v_j:
                         continue
-                    for v_j in neighbors_v:
-                        if v_j not in ruta.clientes or v_i == v_j:
+                    
+                    neighbors_vj = p_neighborhoods.get(v_j, [])
+                    
+                    # Tipo I: v_k en vecindario de v_i
+                    for v_k in neighbors_vi:
+                        if v_k in ruta.clientes and v_k != v_i and v_k != v_j:
+                            tipo1 = self._try_type_i_insertion(
+                                ruta.clientes, vertex_to_be_inserted, 
+                                v_i, v_j, v_k, ruta.cisterna, productos_map
+                            )
+                            if tipo1 and tipo1[1] < best_cost:
+                                best_insertion = ('type1', tipo1[0], ruta.cisterna)
+                                best_cost = tipo1[1]
+                                best_route_idx = idx
+                    
+                    # Tipo II: v_k en vecindario de v_i, v_l en vecindario de v_j
+                    for v_k in neighbors_vi:
+                        if v_k not in ruta.clientes:
                             continue
-                        
-                        # Buscar v_k en vecindario de v_i
-                        neighbors_vi = p_neighborhoods.get(v_i, [])
-                        for v_k in neighbors_vi:
-                            if v_k in ruta.clientes and v_k != v_i and v_k != v_j:
-                                tipo1 = self._try_type_i_insertion(
-                                    ruta.clientes, vertex_to_be_inserted, 
-                                    v_i, v_j, v_k, ruta.cisterna, productos_map
-                                )
-                                if tipo1 and tipo1[1] < best_cost:
-                                    best_insertion = ('type1', tipo1[0], ruta.cisterna)
-                                    best_cost = tipo1[1]
-                                    best_route_idx = idx
+                        for v_l in neighbors_vj:
+                            if v_l not in ruta.clientes:
+                                continue
+                            if v_k == v_j or v_l == v_i:
+                                continue
+                            
+                            tipo2 = self._try_type_ii_insertion(
+                                ruta.clientes, vertex_to_be_inserted,
+                                v_i, v_j, v_k, v_l, ruta.cisterna, productos_map
+                            )
+                            if tipo2 and tipo2[1] < best_cost:
+                                best_insertion = ('type2', tipo2[0], ruta.cisterna)
+                                best_cost = tipo2[1]
+                                best_route_idx = idx
         
         # Aplicar mejor inserción encontrada
         if best_insertion:
-            _, new_route_clients, cisterna = best_insertion
+            tipo, new_route_clients, cisterna = best_insertion
             
             # Reconstruir productos_map
             productos_map = {}
