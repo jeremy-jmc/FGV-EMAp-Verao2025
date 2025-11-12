@@ -51,7 +51,7 @@ po/*~
 rsconnect/
 
 optimizacao_julia/io1/**/*.pdf
-optimizacao_julia/io1/**/*.csv
+# optimizacao_julia/io1/**/*.csv
 optimizacao_julia/io1/past_projects
 optimizacao_julia/io1/misc
 __pycache__/
