@@ -597,7 +597,7 @@ class SweepAlgorithm:
         
         return rutas
     
-    def improving_sweep(self, rutas_iniciales: List[Ruta]) -> List[Ruta]:
+    def improving_sweep(self, rutas_iniciales: List[Ruta], clockwise: bool = False) -> Tuple[List[Ruta], bool]:
         """
         Implementa el algoritmo de mejora del Forward Angular Sweep.
 
@@ -611,20 +611,30 @@ class SweepAlgorithm:
         The second location considered for inclusion in route K is the location in route K + 1 that is nearest to location p.
         If one or more locations are added to route K by this scheme, then the next location in route K + 1 is also checked to see if it can be included in route K.
         
-        The process of adding one or more locations to route K and deleting another location continues until no further improvement is found. 
-        The X and Y are then rotated counterclockwise, and the entire process is repeated until all possibilities have been exhausted.
+        The process of adding one or more locations to route K and deleting another location continues until no further improvement is found.
+        
+        Args:
+            rutas_iniciales: Lista de rutas iniciales
+            clockwise: Si True, procesa las rutas en orden inverso (sentido horario)
+        
+        Returns:
+            (rutas_mejoradas, hubo_mejora): Tupla con las rutas mejoradas y un flag indicando si hubo mejora
         """
         # Radio promedio para la selección del cliente a eliminar en K
         avg_radius = np.mean([c.radio for c in self.clientes])
 
         rutas_mejoradas = copy.deepcopy(rutas_iniciales)
+        if clockwise:
+            rutas_mejoradas = list(reversed(rutas_mejoradas))
+        
         vehiculos_usados = contar_vehiculos(rutas_mejoradas)
 
-        mejora_global = True
         iteracion = 0
+        hubo_alguna_mejora = False
 
-        while mejora_global:
-            mejora_global = False
+        seguir_mejorando = True
+        while seguir_mejorando:
+            seguir_mejorando = False
             iteracion += 1
 
             for k in range(len(rutas_mejoradas) - 1):
@@ -807,15 +817,87 @@ class SweepAlgorithm:
                     rutas_mejoradas[k + 1] = nueva_ruta_k_plus_1
 
                     mejora_local = True
-                    mejora_global = True
-                    print(f"  [Iteración {iteracion}] Mejora rutas {k}-{k+1}: ${costo_actual:.2f} → ${nuevo_costo:.2f} (ahorro: ${costo_actual - nuevo_costo:.2f})")
+                    seguir_mejorando = True
+                    hubo_alguna_mejora = True
+                    direccion_str = "horario" if clockwise else "antihorario"
+                    print(f"  [Iteración {iteracion} - {direccion_str}] Mejora rutas {k}-{k+1}: ${costo_actual:.2f} → ${nuevo_costo:.2f} (ahorro: ${costo_actual - nuevo_costo:.2f})")
 
-        print(f"\n>>> Proceso de mejora completado en {iteracion} iteraciones.")
-        print(f">>> Vehículos utilizados en Improving Sweep:")
+        direccion_str = "horario" if clockwise else "antihorario"
+        print(f"\n>>> Proceso de mejora ({direccion_str}) completado en {iteracion} iteraciones.")
+        print(f">>> Vehículos utilizados:")
         print(f"  * Tipo 1: {vehiculos_usados[1]}/{num_vehiculos_por_tipo}")
         print(f"  * Tipo 2: {vehiculos_usados[2]}/{num_vehiculos_por_tipo}")
+
+        # Si se aplicó clockwise, devolver las rutas en el orden original
+        if clockwise:
+            rutas_mejoradas = list(reversed(rutas_mejoradas))
+
+        return rutas_mejoradas, hubo_alguna_mejora
+
+    def iterative_improving_sweep(self, rutas_iniciales: List[Ruta]) -> List[Ruta]:
+        """
+        Ejecuta improving_sweep alternando entre sentido antihorario y horario hasta que ambas direcciones no produzcan mejoras.
         
-        return rutas_mejoradas
+        Según Gillett & Miller (1974): "The X and Y axes are then rotated counterclockwise 
+        or in the first location (counterclockwise is to the left). The procedure is then 
+        repeated. The process of rotating the X and Y axes is continued until all 
+        possibilities have been exhausted."
+        
+        Args:
+            rutas_iniciales: Lista de rutas iniciales del forward_sweep
+        
+        Returns:
+            Lista de rutas mejoradas después de agotar ambas direcciones
+        """
+        rutas_actuales = rutas_iniciales
+        mejora_global = True
+        iteracion_global = 0
+
+        print("\n" + "="*80)
+
+        print("INICIANDO MEJORA ITERATIVA (CLOCKWISE Y COUNTERCLOCKWISE)")
+        print("="*80)
+        
+        while mejora_global:
+            iteracion_global += 1
+            mejora_global = False
+            
+            print(f"\n>>> Iteración global {iteracion_global}")
+            
+            # Intentar mejora en sentido antihorario (counterclockwise)
+            print("\n  >>> Intentando mejora en sentido ANTIHORARIO...")
+            rutas_ccw, mejora_ccw = self.improving_sweep(rutas_actuales, clockwise=False)
+            
+            if mejora_ccw:
+                rutas_actuales = rutas_ccw
+                mejora_global = True
+                costo_actual = sum(r.costo_total for r in rutas_actuales)
+                print(f"  >>> Mejora encontrada en sentido antihorario. Costo actual: ${costo_actual:,.2f}")
+            else:
+                print(f"  >>> No se encontraron mejoras en sentido antihorario")
+            
+            # Intentar mejora en sentido horario (clockwise)
+            print("\n  >>> Intentando mejora en sentido HORARIO...")
+            rutas_cw, mejora_cw = self.improving_sweep(rutas_actuales, clockwise=True)
+            
+            if mejora_cw:
+                rutas_actuales = rutas_cw
+                mejora_global = True
+                costo_actual = sum(r.costo_total for r in rutas_actuales)
+                print(f"  >>> Mejora encontrada en sentido horario. Costo actual: ${costo_actual:,.2f}")
+            else:
+                print(f"  >>> No se encontraron mejoras en sentido horario")
+            
+            # Si ninguna dirección produjo mejora, terminar
+            if not mejora_ccw and not mejora_cw:
+                print(f"\n>>> No se encontraron más mejoras en ninguna dirección.")
+                mejora_global = False
+        
+        print("\n" + "="*80)
+        print(f"MEJORA ITERATIVA COMPLETADA EN {iteracion_global} ITERACIONES GLOBALES")
+        print("="*80)
+        
+        return rutas_actuales
 
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
         """Imprime la solución de forma legible."""
@@ -1003,7 +1085,7 @@ def angular_sweep_algorithm(
     solver.imprimir_solucion(rutas, 1)
     solver.visualizar_rutas(rutas)
 
-    rutas = solver.improving_sweep(rutas)
+    rutas = solver.iterative_improving_sweep(rutas)
     solver.imprimir_solucion(rutas, 1)
     solver.visualizar_rutas(rutas)
     
