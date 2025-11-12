@@ -255,8 +255,15 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
 # Execute
 # -----------------------------------------------------------------------------
 
+best_cost_solution = float('inf')
+best_config = {}
 for cc in [True, False]:
     for sd in [True, False]:
         print(f"\n--- Clockwise: {cc} | Split Demands: {sd} ---")
         rutas_solucion, costo = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=False, split_demands=False)
         print(f"Solución final con costo total: ${costo:,.2f}")
+        if costo < best_cost_solution:
+            best_cost_solution = costo
+            best_config = {'clockwise': cc, 'split_demands': sd}
+
+print(f"\n=== Mejor configuración encontrada: Clockwise={best_config['clockwise']}, Split Demands={best_config['split_demands']} con costo total: ${best_cost_solution:,.2f} ===")
