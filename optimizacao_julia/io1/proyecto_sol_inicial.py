@@ -252,9 +252,14 @@ def build_product_map(clientes_list: List[int], route_k: Ruta, route_k_plus_1: R
     return m
 
 
-class SolverTabuSearchMCVRPTW:
+class SweepAlgorithm:
+    """
+    Implements the Angular Sweep Algorithm for initial solution construction.
+    Based on Gillett & Miller (1974) - 'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
+    """
     
-    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, tiempo_descarga: float = 5, M: float = 10000):
+    def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, 
+                 tiempo_descarga: float = 5, M: float = 10000):
         """
         Inicializa el algoritmo con los datos del problema.
         
@@ -616,7 +621,6 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas
     
-
     def _calcular_score_eliminacion(self, cliente_id: int, avg_radius: float) -> float:
         """
         Calcula el score para seleccionar el cliente a eliminar de una ruta.
@@ -950,7 +954,6 @@ class SolverTabuSearchMCVRPTW:
 
         return rutas_mejoradas, hubo_alguna_mejora
 
-
     def iterative_improving_sweep(self, rutas_candidatas: List[Ruta]) -> List[Ruta]:
         """
         Ejecuta improving_sweep alternando entre sentido antihorario y horario hasta que ambas direcciones no produzcan mejoras.
@@ -971,7 +974,6 @@ class SolverTabuSearchMCVRPTW:
         iteracion_global = 0
 
         print("\n" + "="*80)
-
         print("INICIANDO MEJORA ITERATIVA (CLOCKWISE Y COUNTERCLOCKWISE)")
         print("="*80)
         
@@ -1015,54 +1017,7 @@ class SolverTabuSearchMCVRPTW:
         print("="*80)
         
         return rutas_actuales
-
-
-    # Tabu Search
-    def perturbation(self, rutas: List[Ruta]) -> List[Ruta]:
-        """
-        To perturb a solution a random client is chosen and removed from its route, together its the `pi` nearest neighbors clientes
-        `pi` is randomly chosen in [0, sqrt(n)], where n is the number of clients in the solution.
-
-        The removed clients are then reinserted in the solution using a greedy insertion heuristic.
-        Each clients is inserted into the route which minimizes the increase in the total routing cost (having into account the schedule, vehicle, and capacity constraints). [Parallelize operations for speedup]
-
-        We use the Generalized Insertion Procedure (GENI) to insert visits into routes or remove visits from routes. 
-        Together with the insertion or removal of a vertex, GENI applies a subset of 3-opt and 4-opt moves to the route.
-        """
-        pi = random.uniform(0, math.sqrt(self.n))
-        return rutas
     
-    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, gamma: float = 1.0) -> List[Ruta]:
-        """
-        The performance of the tabu search depends on the neighborhood structure, the handling of infeasible solutions, and the design of the short-term memory.
-
-        The proposed implementation startas from some initial solution and repeatedly moves to the best non-tabu neighbor. 
-        The current solution may exceed, the capacity, lenght, or time window constraints.
-
-        
-        For a set of routes $s = {R_1, ldots, R_tau}$ we define its time (or distance) excess as:
-
-        $$D^+(s) = sum_{R in s} max{d(R) - D, 0}$$
-
-        and its capacity excess as:
-
-        $$C^+ = sum_{R in s} max{max_{i in [m]} Delta c_i, 0}$$
-
-        for $Delta c = (Delta c_1, ldots, Delta c_m) = c(R) - C$.
-
-        The objective value of solution $s$ is then:
-
-        $$F(s) = d(s) + alpha C^+(s) + beta D^+(s)$$
-
-        where $alpha$ and $beta$ are penalties for each unit of capacity and time excess respectively. Initially, $alpha = beta = 0$.
-        We will set $gamma$ as the penalty for each unit of time window violation.
-
-        The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
-        Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
-        """
-
-        return rutas
-
     # Utilities for output and visualization
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
         """Imprime la solución de forma legible."""
@@ -1215,6 +1170,66 @@ class SolverTabuSearchMCVRPTW:
         plt.show()
 
 
+class SolverTabuSearchMCVRPTW:
+    """
+    Solver for Multi-Compartment Vehicle Routing Problem with Time Windows using Tabu Search.
+    Based on Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem'
+    """
+    
+    def __init__(self, sweep_solver: SweepAlgorithm):
+        """
+        Inicializa el solver de Tabu Search.
+        
+        Args:
+            sweep_solver: Instancia de SweepAlgorithm para reutilizar funciones auxiliares
+        """
+        self.sweep = sweep_solver
+    
+    def perturbation(self, rutas: List[Ruta]) -> List[Ruta]:
+        """
+        To perturb a solution a random client is chosen and removed from its route, together its the `pi` nearest neighbors clientes
+        `pi` is randomly chosen in [0, sqrt(n)], where n is the number of clients in the solution.
+
+        The removed clients are then reinserted in the solution using a greedy insertion heuristic.
+        Each clients is inserted into the route which minimizes the increase in the total routing cost (having into account the schedule, vehicle, and capacity constraints). [Parallelize operations for speedup]
+
+        We use the Generalized Insertion Procedure (GENI) to insert visits into routes or remove visits from routes. 
+        Together with the insertion or removal of a vertex, GENI applies a subset of 3-opt and 4-opt moves to the route.
+        """
+        pi = random.uniform(0, math.sqrt(self.sweep.n))
+        return rutas
+    
+    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, gamma: float = 1.0) -> List[Ruta]:
+        """
+        The performance of the tabu search depends on the neighborhood structure, the handling of infeasible solutions, and the design of the short-term memory.
+
+        The proposed implementation startas from some initial solution and repeatedly moves to the best non-tabu neighbor. 
+        The current solution may exceed, the capacity, lenght, or time window constraints.
+
+        
+        For a set of routes $s = {R_1, ldots, R_tau}$ we define its time (or distance) excess as:
+
+        $$D^+(s) = sum_{R in s} max{d(R) - D, 0}$$
+
+        and its capacity excess as:
+
+        $$C^+ = sum_{R in s} max{max_{i in [m]} Delta c_i, 0}$$
+
+        for $Delta c = (Delta c_1, ldots, Delta c_m) = c(R) - C$.
+
+        The objective value of solution $s$ is then:
+
+        $$F(s) = d(s) + alpha C^+(s) + beta D^+(s)$$
+
+        where $alpha$ and $beta$ are penalties for each unit of capacity and time excess respectively. Initially, $alpha = beta = 0$.
+        We will set $gamma$ as the penalty for each unit of time window violation.
+
+        The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
+        Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
+        """
+
+        return rutas
+
 
 def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bool = False, I: int = 1000, split_demands: bool = False,
                         velocidad: float = 60, tiempo_descarga: float = 5) -> List[Ruta]:
@@ -1239,26 +1254,27 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bo
     if split_demands:
         df_input = split_client_demands(df_input)
 
-    solver = SolverTabuSearchMCVRPTW(df_input, tipos_cisternas, velocidad, tiempo_descarga)
+    sweep_solver = SweepAlgorithm(df_input, tipos_cisternas, velocidad, tiempo_descarga)
     
     # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
 
     # Greedy construction
-    rutas = solver.forward_sweep()
-    solver.imprimir_solucion(rutas, 1)
-    solver.visualizar_rutas(rutas)
+    rutas = sweep_solver.forward_sweep()
+    sweep_solver.imprimir_solucion(rutas, 1)
+    sweep_solver.visualizar_rutas(rutas)
 
     # "2-opt" type improvement clockwise and counterclockwise
-    rutas = solver.iterative_improving_sweep(rutas)
-    solver.imprimir_solucion(rutas, 1)
-    solver.visualizar_rutas(rutas)
+    rutas = sweep_solver.iterative_improving_sweep(rutas)
+    sweep_solver.imprimir_solucion(rutas, 1)
+    sweep_solver.visualizar_rutas(rutas)
 
     # Tabu Search main loop
+    tabu_solver = SolverTabuSearchMCVRPTW(sweep_solver)
     best_solution = rutas
     best_cost = sum(r.costo_total for r in best_solution)
     for iteration in range(1, I + 1):
-        rutas_perturbadas = solver.perturbation(rutas)
-        rutas = solver.tabu_search(rutas_perturbadas)
+        rutas_perturbadas = tabu_solver.perturbation(rutas)
+        rutas = tabu_solver.tabu_search(rutas_perturbadas, iteration)
 
         prob = (iteration / I) ** 2
         if random.random() < prob:
