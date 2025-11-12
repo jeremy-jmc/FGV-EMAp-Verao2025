@@ -101,9 +101,14 @@ import matplotlib.patches as mpatches
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import copy
+import random
 
 pd.set_option('display.float_format', lambda x: '%.2f' % x)
 np.set_printoptions(precision=2, suppress=True)
+
+SEED = 42
+np.random.seed(SEED)
+random.seed(SEED)
 
 
 # Convertir ventanas de tiempo a minutos desde 04:00
@@ -144,13 +149,9 @@ df = (
 df['E'] = df['ventana_inicio'].apply(time_to_minutes)
 df['L'] = df['ventana_fin'].apply(time_to_minutes)
 
-
-clockwise = False
 df['AN'] = df.apply(
     lambda row: polar_coordinate_angle(row['x'], row['y'], df.loc[0, 'x'], df.loc[0, 'y']), axis=1
 )
-if clockwise:
-    df['AN'] = df['AN'].apply(clockwise_angle)
 
 df['R'] = df.apply(
     lambda row: radius(row['x'], row['y'], df.loc[0, 'x'], df.loc[0, 'y']), axis=1
@@ -164,18 +165,36 @@ df = (
     .rename(columns={'index': 'old_index'})
     .reset_index(drop=True).reset_index(drop=False)
 )
-
-
-# Distancias euclidianas
-coords = df[['x', 'y']].values
-D = np.sqrt(((coords[:, None] - coords[None, :]) ** 2).sum(axis=2))
-
 display(df)
+
+# Split demands into two rows: one for gasohol and another for diesel
+gasohol_df = df.copy()
+gasohol_df["tipo_combustible"] = "gasohol"
+gasohol_df["demanda_diesel"] = 0
+
+diesel_df = df.copy()
+diesel_df["tipo_combustible"] = "diesel"
+diesel_df["demanda_gasohol"] = 0
+
+df_split_demands = (
+    pd.concat([gasohol_df, diesel_df], ignore_index=True)
+    .sort_values(by=['AN', 'R'])
+    .drop_duplicates(subset=['index', 'demanda_gasohol', 'demanda_diesel'], keep='first')
+    .assign(
+        old_index=lambda x: x.index
+    ).drop(columns=['index'])
+    .reset_index(drop=True).reset_index(drop=False)
+)
+display(df_split_demands)
 
 
 # -----------------------------------------------------------------------------
 # Parámetros del problema
 # -----------------------------------------------------------------------------
+
+# Distancias euclidianas
+coords = df[['x', 'y']].values
+D = np.sqrt(((coords[:, None] - coords[None, :]) ** 2).sum(axis=2))
 
 # Parámetros de la flota
 N = df.shape[0]  # Número total de nodos (depósito + clientes)
@@ -232,7 +251,6 @@ class Ruta:
     tiempos_llegada: List[float]  # Tiempo de llegada a cada cliente (en minutos desde 04:00)
 
 
-# Calcular vehículos usados basándose en las rutas iniciales
 def contar_vehiculos(rutas: List[Ruta]) -> Dict[int, int]:
     contador = {1: 0, 2: 0}
     for ruta in rutas:
@@ -448,6 +466,7 @@ class SolverTabuSearchMCVRPTW:
         cisternas_factibles.sort(key=lambda x: x[1])
         return cisternas_factibles[0][0]
     
+    # Initial solution construction: Sweep Algorithm (Gillet & Miller, 1974)
     def forward_sweep(self) -> List[Ruta]:
         """
         Algoritmo Forward Sweep.
@@ -674,14 +693,7 @@ class SolverTabuSearchMCVRPTW:
             key=lambda c: self.distancia(ultimo_cliente_k, c)
         )
     
-    def _intentar_insercion_greedy(
-        self,
-        base_clientes: List[int],
-        clientes_a_insertar: List[int],
-        ruta_k: Ruta,
-        ruta_k_plus_1: Ruta,
-        vehiculos_disponibles: Dict[int, int]
-    ) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
+    def _intentar_insercion_greedy(self, base_clientes: List[int], clientes_a_insertar: List[int], ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
         """
         Intenta insertar clientes en la ruta base usando estrategia greedy.
         
@@ -716,14 +728,7 @@ class SolverTabuSearchMCVRPTW:
         
         return (ruta_actual, cisterna_actual, info_actual, costo_actual)
     
-    def _encontrar_mejor_posicion_insercion(
-        self,
-        ruta_actual: List[int],
-        cliente_id: int,
-        ruta_k: Ruta,
-        ruta_k_plus_1: Ruta,
-        vehiculos_disponibles: Dict[int, int]
-    ) -> Optional[Tuple[int, Cisterna, Dict, float]]:
+    def _encontrar_mejor_posicion_insercion(self, ruta_actual: List[int], cliente_id: int, ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[int, Cisterna, Dict, float]]:
         """
         Encuentra la mejor posición para insertar un cliente en una ruta.
         
@@ -759,14 +764,7 @@ class SolverTabuSearchMCVRPTW:
         
         return (mejor_pos, mejor_cisterna, mejor_info, mejor_costo)
     
-    def _reconstruir_ruta_k_plus_1(
-        self,
-        base_clientes: List[int],
-        cliente_a_insertar: int,
-        ruta_k: Ruta,
-        ruta_k_plus_1: Ruta,
-        vehiculos_disponibles: Dict[int, int]
-    ) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
+    def _reconstruir_ruta_k_plus_1(self, base_clientes: List[int], cliente_a_insertar: int, ruta_k: Ruta, ruta_k_plus_1: Ruta, vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, float]]:
         """
         Reconstruye la ruta K+1 insertando un cliente eliminado de K.
         
@@ -803,14 +801,7 @@ class SolverTabuSearchMCVRPTW:
         
         return (mejor_ruta, mejor_cisterna, mejor_info, mejor_costo)
     
-    def _buscar_mejor_intercambio(
-        self,
-        ruta_k: Ruta,
-        ruta_k_plus_1: Ruta,
-        cliente_eliminar: int,
-        candidatos: List[int],
-        vehiculos_disponibles: Dict[int, int]
-    ) -> Optional[Tuple[List[int], Cisterna, Dict, List[int], Cisterna, Dict, float]]:
+    def _buscar_mejor_intercambio(self, ruta_k: Ruta, ruta_k_plus_1: Ruta, cliente_eliminar: int, candidatos: List[int], vehiculos_disponibles: Dict[int, int]) -> Optional[Tuple[List[int], Cisterna, Dict, List[int], Cisterna, Dict, float]]:
         """
         Busca el mejor intercambio de clientes entre dos rutas consecutivas.
         
@@ -861,14 +852,7 @@ class SolverTabuSearchMCVRPTW:
         
         return None
     
-    def _crear_ruta_desde_swap(
-        self,
-        clientes: List[int],
-        cisterna: Cisterna,
-        info: Dict,
-        ruta_original_k: Ruta,
-        ruta_original_k_plus_1: Ruta
-    ) -> Ruta:
+    def _crear_ruta_desde_swap(self, clientes: List[int], cisterna: Cisterna, info: Dict, ruta_original_k: Ruta, ruta_original_k_plus_1: Ruta) -> Ruta:
         """
         Crea un objeto Ruta a partir del resultado de un intercambio.
         """
@@ -1047,6 +1031,7 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas_actuales
 
+    # Tabu Search
 
     # Utilities for output and visualization
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
@@ -1201,15 +1186,25 @@ class SolverTabuSearchMCVRPTW:
 
 
 
-def tabu_search_mcvrptw(
-        data: pd.DataFrame, 
-        tipos_cisternas: Dict,  
-        velocidad: float = 60, 
-        tiempo_descarga: float = 5
-):
+def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bool = False, velocidad: float = 60, tiempo_descarga: float = 5) -> List[Ruta]:
     """
     Implementing and adapting ideas from Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem' for the MCVRP with Time Windows
-    """    
+
+    Pseudo-code:
+        function ITS()
+            s <- SweepConstruction()
+            s <- TabuSearch(s)
+            for i = 1 , ...., I iterations do
+                s' <- Perturb(s)
+                s <- TabuSearch(s')
+                with probability (i / I)^2: s <- s'
+            end for
+            return the best solution s' found during search
+        end function
+    """
+    if clockwise:
+        data['AN'] = data['AN'].apply(clockwise_angle)
+
     solver = SolverTabuSearchMCVRPTW(data, tipos_cisternas, velocidad, tiempo_descarga)
     
     # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
@@ -1229,5 +1224,5 @@ def tabu_search_mcvrptw(
     return rutas
 
 
-rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas)
+rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas, False)
 
