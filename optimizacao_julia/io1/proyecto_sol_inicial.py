@@ -255,8 +255,31 @@ def build_product_map(clientes_list: List[int], route_k: Ruta, route_k_plus_1: R
 
 class SweepAlgorithm:
     """
-    Implementación del algoritmo Angular Sweep de Gillett & Miller (1974)
-    adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
+    Implementación del algoritmo Angular Sweep de Gillett & Miller (1974) adaptado para VRP con múltiples compartimentos y ventanas de tiempo.
+    'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
+
+        The problem is to determine the number of routes and the paths in each rout that will minimize the total distance traveled by all vehicles in supplying all demands, subject to the lead and distance constraints on each vehicle.
+
+        The distance, constraint could be replaced by a time constraint without changing the problem.
+
+        The sweep algorithm divides the locations into a number of routes and then operates on the individual routes unitl an optimum or near-optimum solution is obtained.
+
+        The vehicle-dispatch problem is to minimize the total distance traveled supplying all demands while satisfying all constraints
+
+        The sweep algorithm consists of two parts: a forward sweep and a backward sweep.
+
+            In the forward-sweep algorithm, the locations are partitioned into routes beginning with the location that has the smallest angle, namely, location 1. 
+            Recall that the locations were renumbered according to the size of their polar-coordinate angle and the depot is location 0. 
+            The first route consists of locations 1, 2, ..., I, where I is the last location that can be added without exceeding the vehicle capacity or distance constraint. 
+            The second route contains locations J+1, J+2, ..., L, where L is the last location that can be added to the second route without exceeding the vehicle capacity or distance constraint. 
+            The remaining routes are formed in the same manner. 
+            The total distance traveled then is just the sum of distances for each route.
+
+        Then, a 2-opt type of improvement procedure is applied to the set of routes obtained from the forward sweep. 
+        The procedure to modify consider replacing one location in route K with one or more locations in route K + 1
+        This improvement process is continued both in the clockwise and counterclockwise directions until no further improvement is possible.
+
+        The backward-sweep algorithm is similar to the forward-sweep algorithm except that the locations are considered in the reverse order.
     """
     
     def __init__(self, df: pd.DataFrame, tipos_cisternas: Dict, velocidad: float = 60, tiempo_descarga: float = 5, M: float = 10000):
@@ -326,7 +349,7 @@ class SweepAlgorithm:
         """Retorna el tiempo de viaje en minutos entre los nodos i y j."""
         return (self.distancia(i, j) / self.velocidad) * 60
     
-    def calcular_tiempo_servicio(self, cliente_id: int, productos: List[str]) -> float:
+    def calcular_tiempo_servicio(self, productos: List[str]) -> float:
         """
         Calcula el tiempo de servicio en un cliente según los productos entregados.
         
@@ -390,10 +413,7 @@ class SweepAlgorithm:
             tiempos_llegada[cliente_id] = tiempo_llegada
             
             # Tiempo de servicio
-            tiempo_servicio = self.calcular_tiempo_servicio(
-                cliente_id, 
-                productos_por_cliente[cliente_id]
-            )
+            tiempo_servicio = self.calcular_tiempo_servicio(productos_por_cliente[cliente_id])
             
             tiempo_actual = tiempo_llegada + tiempo_servicio
             nodo_actual = cliente_id
@@ -1051,34 +1071,16 @@ class SweepAlgorithm:
 
 
 
-def angular_sweep_algorithm(
+def tabu_search_mcvrptw(
         data: pd.DataFrame, 
         tipos_cisternas: Dict,  
         velocidad: float = 60, 
         tiempo_descarga: float = 5
 ):
     """
-    Implementing the algorithm/ideas of Gillet & Miller (1971) - 'A Heuristic Algorithm for the Vehicle-Dispatch Problem'
-
-        The problem is to determine the number of routes and the paths in each rout that will minimize the total distance traveled by all vehicles in supplying all demands, subject to the lead and distance constraints on each vehicle.
-
-        The distance, constraint could be replaced by a time constraint without changing the problem.
-
-        The sweep algorithm divides the locations into a number of routes and then operates on the individual routes unitl an optimum or near-optimum solution is obtained.
-
-        The vehicle-dispatch problem is to minimize the total distance traveled supplying all demands while satisfying all constraints
-
-        The sweep algorithm consists of two parts: a forward sweep and a backward sweep.
-
-            In the forward-sweep algorithm, the locations are partitioned into routes beginning with the location that has the smallest angle, namely, location 1. 
-            Recall that the locations were renumbered according to the size of their polar-coordinate angle and the depot is location 0. 
-            The first route consists of locations 1, 2, ..., I, where I is the last location that can be added without exceeding the vehicle capacity or distance constraint. 
-            The second route contains locations J+1, J+2, ..., L, where L is the last location that can be added to the second route without exceeding the vehicle capacity or distance constraint. 
-            The remaining routes are formed in the same manner. 
-            The total distance traveled then is just the sum of distances for each route.
-
-    """
-
+    Implementing and adapting ideas from Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem' for the MCVRP with Time Windows
+    """    
+    # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
     solver = SweepAlgorithm(data, tipos_cisternas, velocidad, tiempo_descarga)
     
     rutas = solver.forward_sweep()
@@ -1092,5 +1094,5 @@ def angular_sweep_algorithm(
     return rutas
 
 
-rutas_solucion = angular_sweep_algorithm(df, tipos_cisternas)
+rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas)
 
