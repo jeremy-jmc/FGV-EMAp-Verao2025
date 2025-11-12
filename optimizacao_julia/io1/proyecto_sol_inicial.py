@@ -220,15 +220,15 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
     # Construcción inicial con Angular Sweep
     rutas = sweep_solver.forward_sweep()
     visualizer.imprimir_solucion(rutas, 1)
-    visualizer.visualizar_rutas(rutas)
+    visualizer.visualizar_rutas(rutas, "Forward Sweep")
 
     # Mejora con "2-opt" bidireccional
     rutas = sweep_solver.iterative_improving_sweep(rutas)
     visualizer.imprimir_solucion(rutas, 1)
-    visualizer.visualizar_rutas(rutas)
+    visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
 
     # Iterated Tabu Search
-    tabu_solver = SolverTabuSearchMCVRPTW(instance)
+    tabu_solver = SolverTabuSearchMCVRPTW(sweep_solver)
     best_solution = rutas
     best_cost = sum(r.costo_total for r in best_solution)
 
@@ -246,6 +246,8 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
             best_cost = current_cost
             print(f"  [Iteración {iteration}] Nueva mejor solución: ${best_cost:,.2f}")
     
+    visualizer.imprimir_solucion(best_solution, 2)
+    visualizer.visualizar_rutas(best_solution, "Perturbation Only")
     return best_solution
 
 
@@ -253,4 +255,4 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
 # Execute
 # -----------------------------------------------------------------------------
 
-rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas, False)
+rutas_solucion = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=False, split_demands=False)

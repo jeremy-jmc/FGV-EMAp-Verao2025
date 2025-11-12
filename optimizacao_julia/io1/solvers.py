@@ -6,7 +6,7 @@ import copy
 import math
 import random
 
-from models import ProblemInstance, Ruta, Cisterna
+from models import ProblemInstance, Ruta, Cisterna, Cliente
 
 
 # -----------------------------------------------------------------------------
@@ -213,6 +213,7 @@ class SweepAlgorithm:
         """
         self.instance = instance
         self.evaluator = RouteEvaluator(instance)
+        self.best_solution = None
     
     def forward_sweep(self) -> List[Ruta]:
         """
@@ -241,7 +242,7 @@ class SweepAlgorithm:
 
                 Then, a 2-opt type of improvement procedure is applied to the set of routes obtained from the forward sweep. 
                 The procedure to modify consider replacing one location in route K with one or more locations in route K + 1
-                This improvement process is continued both in the clockwise and counterclockwise directions until no further improvement is possible.
+                This improvement process is continued in the clockwise and counterclockwise directions until no further improvement is possible.
 
                 The backward-sweep algorithm is similar to the forward-sweep algorithm except that the locations are considered in the reverse order.
 
@@ -336,6 +337,7 @@ class SweepAlgorithm:
         print(f"  * Tipo 1: {vehiculos_usados[1]}/{self.instance.num_vehiculos_por_tipo}")
         print(f"  * Tipo 2: {vehiculos_usados[2]}/{self.instance.num_vehiculos_por_tipo}")
         
+        self.best_solution = copy.deepcopy(rutas)
         return rutas
     
     def _calcular_score_eliminacion(self, cliente_id: int, avg_radius: float) -> float:
@@ -606,6 +608,8 @@ class SweepAlgorithm:
 
         if clockwise:
             rutas_mejoradas = list(reversed(rutas_mejoradas))
+        if hubo_alguna_mejora:
+            self.best_solution = copy.deepcopy(rutas_mejoradas)
 
         return rutas_mejoradas, hubo_alguna_mejora
 
@@ -668,6 +672,7 @@ class SweepAlgorithm:
         print(f"MEJORA ITERATIVA COMPLETADA EN {iteracion_global} ITERACIONES GLOBALES")
         print("="*80)
         
+        self.best_solution = copy.deepcopy(rutas_actuales)
         return rutas_actuales
 
 
@@ -689,9 +694,228 @@ class SolverTabuSearchMCVRPTW:
             sweep_solver: Instancia de SweepAlgorithm para reutilizar funciones auxiliares
         """
         self.sweep = sweep_solver
+        self.best_solution = copy.deepcopy(sweep_solver.best_solution)
+    
+    def _build_p_neighborhoods(self, clientes: List[int], p: int) -> Dict[int, List[int]]:
+        """Construye p-vecindarios para cada cliente basado en distancias."""
+        neighborhoods = {}
+        for cliente_id in clientes:
+            distances = [
+                (other_id, self.sweep.instance.distancia(cliente_id, other_id)) 
+                for other_id in clientes if other_id != cliente_id
+            ]
+            distances.sort(key=lambda x: x[1])
+            neighborhoods[cliente_id] = [cid for cid, _ in distances[:p]]
+        return neighborhoods
+    
+    def _calculate_insertion_cost(self, route_clients: List[int], insert_pos: int, 
+                                  vertex: int, cisterna: Cisterna, 
+                                  productos_map: Dict[int, List[str]]) -> Optional[float]:
+        """Calcula el costo de insertar un vértice en una posición específica."""
+        new_route = route_clients[:insert_pos] + [vertex] + route_clients[insert_pos:]
+        
+        factible, _, _ = self.sweep.evaluator.verificar_factibilidad_ruta(
+            new_route, cisterna, productos_map
+        )
+        if not factible:
+            return None
+        
+        distancia = self.sweep.evaluator.calcular_distancia_ruta(new_route)
+        return cisterna.costo_fijo + cisterna.costo_km * distancia
+    
+    def _try_type_i_insertion(self, route_clients: List[int], v: int, v_l: int, 
+                             v_j: int, v_k: int, cisterna: Cisterna,
+                             productos_map: Dict[int, List[str]]) -> Optional[Tuple[List[int], float]]:
+        """Intenta inserción Tipo I: v entre v_l y v_j con v_k en el camino."""
+        try:
+            idx_l = route_clients.index(v_l)
+            idx_j = route_clients.index(v_j)
+            idx_k = route_clients.index(v_k)
+            
+            # v_k debe estar en el camino de v_l a v_j
+            if not (idx_l < idx_k < idx_j):
+                return None
+            
+            # Construir nueva ruta: v_l -> v -> v_j, revertir caminos
+            new_route = route_clients[:idx_l+1]  # hasta v_l
+            new_route.append(v)  # insertar v
+            new_route.extend(reversed(route_clients[idx_l+1:idx_j+1]))  # revertir v_l+1...v_j
+            new_route.extend(route_clients[idx_j+1:idx_k])  # mantener hasta v_k-1
+            new_route.extend(reversed(route_clients[idx_k:]))  # revertir desde v_k
+            
+            # Actualizar productos
+            new_productos = productos_map.copy()
+            cliente_v = self.sweep.instance.cliente_por_id(v)
+            new_productos[v] = []
+            if cliente_v.demanda_gasohol > 0:
+                new_productos[v].append('G')
+            if cliente_v.demanda_diesel > 0:
+                new_productos[v].append('D')
+            
+            costo = self._calculate_insertion_cost(new_route, 0, v, cisterna, new_productos)
+            if costo is not None:
+                return (new_route, costo)
+        except (ValueError, IndexError):
+            pass
+        return None
+    
+    def _try_simple_insertion(self, route_clients: List[int], v: int, 
+                             cisterna: Cisterna, productos_map: Dict[int, List[str]]) -> Optional[Tuple[List[int], int, float]]:
+        """Inserción simple entre dos vértices consecutivos."""
+        cliente_v = self.sweep.instance.cliente_por_id(v)
+        new_productos = productos_map.copy()
+        new_productos[v] = []
+        if cliente_v.demanda_gasohol > 0:
+            new_productos[v].append('G')
+        if cliente_v.demanda_diesel > 0:
+            new_productos[v].append('D')
+        
+        best_pos, best_cost = None, float('inf')
+        for pos in range(len(route_clients) + 1):
+            costo = self._calculate_insertion_cost(route_clients, pos, v, cisterna, new_productos)
+            if costo is not None and costo < best_cost:
+                best_pos = pos
+                best_cost = costo
+        
+        if best_pos is not None:
+            new_route = route_clients[:best_pos] + [v] + route_clients[best_pos:]
+            return (new_route, best_pos, best_cost)
+        return None
+
+    def geni_insertion(self, rutas: List[Ruta], vertex_to_be_inserted: int, p: int = 5) -> List[Ruta]:
+        """
+        Implementing ideas of Gendreau (1992) - 'New insertion and postoptimization procedures for TSP'
+
+        GENI (Generalized Insertion Procedure)
+
+        The algorithm attempts fewer insertions (than predecesors), but executes eah one more carefully bu performing a limited number of local transformations of the tour, simultaneously with the insertion itself.
+
+        The main feature of GENI is that insertion of a vertex `v` in a tour does not necessarily take place between two vertices which are consecutive when they are first considered. 
+        However, after insertion, these two vertices become adjacent to `v` in the new tour. 
+        Suppose that we wish to insert `v` between any vertices `v_l` and `v_j`. Let `v_k` be a vertex on the path from `v_l` to `v_j`. 
+        For any vertex `v_h` on the tour, let `v_h-1` be its predecessor and `v_h+1` its successor.
+        Insertion of `v` between `v_l` and `v_j` can be done in one of two ways:
+
+        Type I insertion:
+
+            Here `v_k` != `v_l`, and `v_k` != `v_j`.
+            Inserting `v` in the tour results in the deletion of arcs (`v_l`, `v_l+1`), (`v_j`, `v_j+1`), and (`v_k`, `v_k+1`), and in their replacement by (`v_l`, `v`), (`v`, `v_j`), (`v_l+1`, `v_k`), and (`v_j+1`, `v_k+1`). This implies that the two paths (`v_l+1` ... `v_j`) and (`v_j+1` ... `v_k`) are reversed.
+
+        Type II insertion:
+            Here `v_k` != `v_j`, and `v_k` != `v_j+1`; `v_l` != `v_i` and `v_l` != `v_i+1`.
+            Inserting `v` in the tour results in the deletion of (`v_i`, `v_i+1`), (`v_l-1`, `v_l`), (`v_j`, `v_j+1`), and (`v_k-1`, `v_k`). 
+            These arcs are replaced by (`v_i`, `v`), (`v`, `v_j`), (`v_l`, `v_j+1`), (`v_k-1`, `v_l-1`) and (`v_i+1`, `v_k`). 
+            As before, the paths (`v_i+1` ... `v_l-1`) and (`v_l` ... `v_j`) are reversed.
+
+        The GENI algorithm considers the two possible orientations of the tour for each possible insertion.
+        Since the potential number of choices for `v_i`, `v_j`, `v_k`, `v_l` is on the order of `n^4`, we limit the search as follows:
+        For any vertex `v` in `V`, define its `p`-neighborhood `N_p(v)` as the set of the `p` vertices on the tour closes to `v` (with respect to the distance matrix).
+        If `v` has fewer than `p` neighbors, they all belong to `N_p(v)`.
+        Then, for a given parameter `p`, we first select `v_i` and `v_j` in `N_p(v)`, `v_k` in `N_p(v_i+1)`, and `v_l` in `N_p(v_j+1).
+        We also consider all insertions of `v` between two consecutive vertices `v_i` and `v_i+1`, as long as `v_i` belongs to `N_p(v)`.
+        In practice `p` is a relatively small number.
+
+            GENI Algorithm:
+                Implement the least cost insertion (having into account constraints) of a vertex `v` considering the two insertion types described above.
+                Update the `p`-neighborhoods of all vertices affected by the insertion.
+                If all vertice are now part of the tour, stop. Otherwise repeat the procedure for another vertex `v` not yet in the tour.
+
+        The complexity of GENI is `O(n p^4 + n^2)` because `p^4` choices of `v_i`, `v_j`, `v_k`, and `v_l`
+        """
+        all_clients = []
+        for ruta in rutas:
+            all_clients.extend(ruta.clientes)
+        
+        # Construir p-vecindarios
+        p_neighborhoods = self._build_p_neighborhoods(all_clients, p)
+        
+        vehiculos_usados = contar_vehiculos(rutas)
+        best_insertion = None
+        best_cost = float('inf')
+        best_route_idx = None
+        
+        # Probar inserción en cada ruta
+        for idx, ruta in enumerate(rutas):
+            productos_map = ruta.productos_entregados.copy()
+            
+            # Inserción simple (más común y eficiente)
+            simple = self._try_simple_insertion(ruta.clientes, vertex_to_be_inserted, 
+                                               ruta.cisterna, productos_map)
+            if simple and simple[2] < best_cost:
+                best_insertion = ('simple', simple[0], ruta.cisterna)
+                best_cost = simple[2]
+                best_route_idx = idx
+            
+            # Intentar inserciones Tipo I solo con vecinos cercanos
+            if vertex_to_be_inserted in p_neighborhoods:
+                neighbors_v = p_neighborhoods.get(vertex_to_be_inserted, [])
+                
+                for v_i in neighbors_v:
+                    if v_i not in ruta.clientes:
+                        continue
+                    for v_j in neighbors_v:
+                        if v_j not in ruta.clientes or v_i == v_j:
+                            continue
+                        
+                        # Buscar v_k en vecindario de v_i
+                        neighbors_vi = p_neighborhoods.get(v_i, [])
+                        for v_k in neighbors_vi:
+                            if v_k in ruta.clientes and v_k != v_i and v_k != v_j:
+                                tipo1 = self._try_type_i_insertion(
+                                    ruta.clientes, vertex_to_be_inserted, 
+                                    v_i, v_j, v_k, ruta.cisterna, productos_map
+                                )
+                                if tipo1 and tipo1[1] < best_cost:
+                                    best_insertion = ('type1', tipo1[0], ruta.cisterna)
+                                    best_cost = tipo1[1]
+                                    best_route_idx = idx
+        
+        # Aplicar mejor inserción encontrada
+        if best_insertion:
+            _, new_route_clients, cisterna = best_insertion
+            
+            # Reconstruir productos_map
+            productos_map = {}
+            for cid in new_route_clients:
+                cliente = self.sweep.instance.cliente_por_id(cid)
+                productos_map[cid] = []
+                if cliente.demanda_gasohol > 0:
+                    productos_map[cid].append('G')
+                if cliente.demanda_diesel > 0:
+                    productos_map[cid].append('D')
+            
+            nueva_ruta = self.sweep.evaluator.crear_ruta_objeto(
+                new_route_clients, cisterna, productos_map
+            )
+            
+            rutas_modificadas = copy.deepcopy(rutas)
+            rutas_modificadas[best_route_idx] = nueva_ruta
+            return rutas_modificadas
+        
+        # Si no se pudo insertar, crear nueva ruta
+        cliente = self.sweep.instance.cliente_por_id(vertex_to_be_inserted)
+        productos_map = {vertex_to_be_inserted: []}
+        if cliente.demanda_gasohol > 0:
+            productos_map[vertex_to_be_inserted].append('G')
+        if cliente.demanda_diesel > 0:
+            productos_map[vertex_to_be_inserted].append('D')
+        
+        cisterna = self.sweep.evaluator.seleccionar_mejor_cisterna(
+            [vertex_to_be_inserted], productos_map, vehiculos_usados
+        )
+        
+        if cisterna:
+            nueva_ruta = self.sweep.evaluator.crear_ruta_objeto(
+                [vertex_to_be_inserted], cisterna, productos_map
+            )
+            return rutas + [nueva_ruta]
+        
+        return rutas
     
     def perturbation(self, rutas: List[Ruta]) -> List[Ruta]:
         """
+        Perturba una solución removiendo un cliente aleatorio y sus pi vecinos más cercanos, luego los reinserta usando GENI.
+
         To perturb a solution a random client is chosen and removed from its route, together its the `pi` nearest neighbors clientes
         `pi` is randomly chosen in [0, sqrt(n)], where n is the number of clients in the solution.
 
@@ -701,8 +925,53 @@ class SolverTabuSearchMCVRPTW:
         We use the Generalized Insertion Procedure (GENI) to insert visits into routes or remove visits from routes. 
         Together with the insertion or removal of a vertex, GENI applies a subset of 3-opt and 4-opt moves to the route.
         """
-        pi = random.uniform(0, math.sqrt(self.sweep.n))
-        return rutas
+        # Recolectar todos los clientes
+        all_clients = []
+        for ruta in rutas:
+            all_clients.extend(ruta.clientes)
+        
+        if len(all_clients) < 2:
+            return rutas
+        
+        # Seleccionar cliente aleatorio
+        selected_client = random.choice(all_clients)
+        
+        # Calcular pi
+        n = len(all_clients)
+        pi = random.randint(0, int(math.sqrt(n)))
+        
+        # Encontrar pi vecinos más cercanos
+        distances = [(cid, self.sweep.instance.distancia(selected_client, cid)) 
+                    for cid in all_clients if cid != selected_client]
+        distances.sort(key=lambda x: x[1])
+        neighbors_to_remove = [cid for cid, _ in distances[:pi]]
+        
+        clients_to_remove = [selected_client] + neighbors_to_remove
+        
+        # Remover clientes de las rutas
+        rutas_sin_clientes = []
+        for ruta in rutas:
+            remaining = [c for c in ruta.clientes if c not in clients_to_remove]
+            if remaining:
+                productos_map = {c: ruta.productos_entregados[c] for c in remaining}
+                vehiculos_usados = contar_vehiculos(rutas_sin_clientes)
+                cisterna = self.sweep.evaluator.seleccionar_mejor_cisterna(
+                    remaining, productos_map, vehiculos_usados
+                )
+                if cisterna:
+                    nueva_ruta = self.sweep.evaluator.crear_ruta_objeto(
+                        remaining, cisterna, productos_map
+                    )
+                    rutas_sin_clientes.append(nueva_ruta)
+        
+        # Reinsertar clientes usando GENI
+        rutas_perturbadas = rutas_sin_clientes
+        random.shuffle(clients_to_remove)  # Aleatorizar orden de inserción
+        
+        for cliente_id in clients_to_remove:
+            rutas_perturbadas = self.geni_insertion(rutas_perturbadas, cliente_id, p=5)
+        
+        return rutas_perturbadas
     
     def _best_shift_move(self, rutas: List[Ruta], zeta: float):
         return rutas
@@ -734,6 +1003,9 @@ class SolverTabuSearchMCVRPTW:
 
         The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
         Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
+
+        Neighbourhood and Tabu List:
+        Diversification:
         """
         gamma, zeta = random.random(), random.random()
 
@@ -755,7 +1027,7 @@ class SolutionVisualizer:
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
         """Imprime la solución de forma legible."""
         print("\n" + "=" * 80)
-        print("SOLUCIÓN - ANGULAR SWEEP ALGORITHM")
+        print("SOLUCIÓN")
         print("=" * 80)
         
         costo_total = sum(r.costo_total for r in rutas)
@@ -803,7 +1075,7 @@ class SolutionVisualizer:
             
         print("\n" + "="*80)
 
-    def visualizar_rutas(self, rutas: List[Ruta]):
+    def visualizar_rutas(self, rutas: List[Ruta], caption: str = ""):
         """Visualiza las rutas en un mapa 2D."""
         colores_base = [
             '#FF6B6B', '#FFA07A', '#98D8C8', '#F7DC6F', 
@@ -815,6 +1087,7 @@ class SolutionVisualizer:
             '#2EC4B6', '#E71D36', '#011627', '#C9ADA7'
         ]
         
+        costo_total = sum(r.costo_total for r in rutas)
         fig, ax = plt.subplots(figsize=(12, 9))
         
         # Dibujar depot
@@ -865,10 +1138,12 @@ class SolutionVisualizer:
                 mpatches.Patch(color=color, 
                               label=f"Ruta {idx+1}: {tipo_str} | {dist_str} | {costo_str}")
             )
-        
+
+        if caption:
+            caption = " - " + caption      
         ax.set_xlabel('Coordenada X (km)', fontsize=11)
         ax.set_ylabel('Coordenada Y (km)', fontsize=11)
-        ax.set_title('Visualización de Rutas - Angular Sweep Algorithm', 
+        ax.set_title('Visualización de Rutas' + caption + f"| CT: ${costo_total:,.2f}", 
                     fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_aspect('equal', adjustable='box')
