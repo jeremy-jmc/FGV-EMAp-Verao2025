@@ -101,6 +101,7 @@ import matplotlib.patches as mpatches
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import copy
+import math
 import random
 
 pd.set_option('display.float_format', lambda x: '%.2f' % x)
@@ -167,25 +168,30 @@ df = (
 )
 display(df)
 
-# Split demands into two rows: one for gasohol and another for diesel
-gasohol_df = df.copy()
-gasohol_df["tipo_combustible"] = "gasohol"
-gasohol_df["demanda_diesel"] = 0
+def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Split demands into two rows: one for gasohol and another for diesel.
+    """
+    # Split demands into two rows: one for gasohol and another for diesel
+    gasohol_df = df.copy()
+    gasohol_df["tipo_combustible"] = "gasohol"
+    gasohol_df["demanda_diesel"] = 0
 
-diesel_df = df.copy()
-diesel_df["tipo_combustible"] = "diesel"
-diesel_df["demanda_gasohol"] = 0
+    diesel_df = df.copy()
+    diesel_df["tipo_combustible"] = "diesel"
+    diesel_df["demanda_gasohol"] = 0
 
-df_split_demands = (
-    pd.concat([gasohol_df, diesel_df], ignore_index=True)
-    .sort_values(by=['AN', 'R'])
-    .drop_duplicates(subset=['index', 'demanda_gasohol', 'demanda_diesel'], keep='first')
-    .assign(
-        old_index=lambda x: x.index
-    ).drop(columns=['index'])
-    .reset_index(drop=True).reset_index(drop=False)
-)
-display(df_split_demands)
+    df_split_demands = (
+        pd.concat([gasohol_df, diesel_df], ignore_index=True)
+        .sort_values(by=['AN', 'R'])
+        .drop_duplicates(subset=['index', 'demanda_gasohol', 'demanda_diesel'], keep='first')
+        .assign(
+            old_index=lambda x: x.index
+        ).drop(columns=['index'])
+        .reset_index(drop=True).reset_index(drop=False)
+    )
+    
+    return df_split_demands
 
 
 # -----------------------------------------------------------------------------
@@ -304,6 +310,7 @@ class SolverTabuSearchMCVRPTW:
         )
         
         self.clientes = []
+        self.n = 0
         for idx, row in df.iloc[1:].iterrows():
             self.clientes.append(Cliente(
                 id=int(row['index']),
@@ -316,6 +323,7 @@ class SolverTabuSearchMCVRPTW:
                 angulo=row['AN'],
                 radio=row['R']
             ))
+            self.n += 1
         
         # Calcular matriz de distancias
         coords = df[['x', 'y']].values
@@ -633,6 +641,7 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas
     
+
     def _calcular_score_eliminacion(self, cliente_id: int, avg_radius: float) -> float:
         """
         Calcula el score para seleccionar el cliente a eliminar de una ruta.
@@ -873,7 +882,7 @@ class SolverTabuSearchMCVRPTW:
             tiempos_llegada=tiempos_llegada
         )
 
-    def improving_sweep(self, rutas_iniciales: List[Ruta], clockwise: bool = False) -> Tuple[List[Ruta], bool]:
+    def improving_sweep(self, rutas_candidatas: List[Ruta], clockwise: bool = False) -> Tuple[List[Ruta], bool]:
         """
         Implementa el algoritmo de mejora del Forward Angular Sweep.
 
@@ -889,7 +898,7 @@ class SolverTabuSearchMCVRPTW:
         """
         avg_radius = np.mean([c.radio for c in self.clientes])
         
-        rutas_mejoradas = copy.deepcopy(rutas_iniciales)
+        rutas_mejoradas = copy.deepcopy(rutas_candidatas)
         if clockwise:
             rutas_mejoradas = list(reversed(rutas_mejoradas))
         
@@ -966,7 +975,8 @@ class SolverTabuSearchMCVRPTW:
 
         return rutas_mejoradas, hubo_alguna_mejora
 
-    def iterative_improving_sweep(self, rutas_iniciales: List[Ruta]) -> List[Ruta]:
+
+    def iterative_improving_sweep(self, rutas_candidatas: List[Ruta]) -> List[Ruta]:
         """
         Ejecuta improving_sweep alternando entre sentido antihorario y horario hasta que ambas direcciones no produzcan mejoras.
         
@@ -981,7 +991,7 @@ class SolverTabuSearchMCVRPTW:
         Returns:
             Lista de rutas mejoradas después de agotar ambas direcciones
         """
-        rutas_actuales = rutas_iniciales
+        rutas_actuales = rutas_candidatas
         mejora_global = True
         iteracion_global = 0
 
@@ -1031,7 +1041,21 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas_actuales
 
+
     # Tabu Search
+    def perturbation(self, rutas: List[Ruta]) -> List[Ruta]:
+        """
+        To perturb a solution a random client is chosen and removed from its route, together its the `pi` nearest neighbors clientes
+        `pi` is randomly chosen in [0, sqrt(n)], where n is the number of clients in the solution.
+
+        The removed clients are then reinserted in the solution using a greedy insertion heuristic.
+        Each clients is inserted into the route which minimizes the increase in the total routing cost (having into account the schedule, vehicle, and capacity constraints).
+        """
+        pi = random.uniform(0, math.sqrt(self.n))
+        return rutas
+    
+    def tabu_search(self, rutas: List[Ruta]) -> List[Ruta]:
+        return rutas
 
     # Utilities for output and visualization
     def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
@@ -1186,7 +1210,8 @@ class SolverTabuSearchMCVRPTW:
 
 
 
-def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bool = False, velocidad: float = 60, tiempo_descarga: float = 5) -> List[Ruta]:
+def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bool = False, I: int = 1000, split_demands: bool = False,
+                        velocidad: float = 60, tiempo_descarga: float = 5) -> List[Ruta]:
     """
     Implementing and adapting ideas from Silvestrin (2017) - 'An Iterated Tabu Search for Multi-Compartment Vehicle Routing Problem' for the MCVRP with Time Windows
 
@@ -1202,10 +1227,13 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bo
             return the best solution s' found during search
         end function
     """
+    df_input = data.copy()
     if clockwise:
-        data['AN'] = data['AN'].apply(clockwise_angle)
+        df_input['AN'] = df_input['AN'].apply(clockwise_angle)
+    if split_demands:
+        df_input = split_client_demands(df_input)
 
-    solver = SolverTabuSearchMCVRPTW(data, tipos_cisternas, velocidad, tiempo_descarga)
+    solver = SolverTabuSearchMCVRPTW(df_input, tipos_cisternas, velocidad, tiempo_descarga)
     
     # Initial solution construction via Angular Sweep Algorithm (Gillet 1974)
 
@@ -1220,6 +1248,21 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict, clockwise: bo
     solver.visualizar_rutas(rutas)
 
     # Tabu Search main loop
+    best_solution = rutas
+    best_cost = sum(r.costo_total for r in best_solution)
+    for iteration in range(1, I + 1):
+        rutas_perturbadas = solver.perturbation(rutas)
+        rutas = solver.tabu_search(rutas_perturbadas)
+
+        prob = (iteration / I) ** 2
+        if random.random() < prob:
+            rutas = rutas_perturbadas
+        
+        current_cost = sum(r.costo_total for r in rutas)
+        if current_cost < best_cost:
+            best_solution = rutas
+            best_cost = current_cost
+            print(f"  [Iteración {iteration}] Nueva mejor solución encontrada: ${best_cost:,.2f}")
     
     return rutas
 

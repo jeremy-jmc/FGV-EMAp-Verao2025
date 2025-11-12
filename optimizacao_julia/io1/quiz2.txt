@@ -1,0 +1,339 @@
+QUIZ 2
+	Convertir una restriccion de igualdad con 2 restricciones de desigualdad
+	Convertir maximizacion en minimizacion
+	Una variable sin restriccion de no negatividad (o variable libre) se puede escribir como la diferencia de 2 variables no negativas
+
+	¿Espacio factible acotado vs no acotado?
+		- El espacio factible acotado es aquel donde las restricciones limitan a las variables en una región finita (por ejemplo, un polígono cerrado en 2D).
+		- El espacio factible no acotado se extiende infinitamente en alguna dirección (por ejemplo, un polígono abierto que “se va al infinito”).
+
+	¿Se podria tener un programa lineal con un espacio factible vacio?
+		Si
+	¿Se podria tener un programa lineal con espacio factible no acotado y un valor optimo finito?
+		Si
+	¿Se podria tener un programa lineal con multiples soluciones optimas?
+		Si
+	Si existe al menos una solucion optima ¿siempre existe una solucion optima que corresponde a una esquina (o punto extremo) del espacio factible?
+		Si
+
+	Si el valor objetivo es infinito en un problema real, hay un error en el programa matematico: inversion de signo, inversion de la direccion de una desigualdad, falta de restriccion, etc.
+
+
+
+Conjuntos
+Parametros
+Variables de Decision
+
+Programa matematico
+	Funcion objetivo
+	Restricciones
+
+El programa es lineal si la funcion objetivo y las restricciones son todas combinaciones lineales de las variables de decision.
+
+
+
+Solucion factible: Satisface todas la restricciones
+Solucion optima: La mejor de la factibles
+Valor objetivo: A cualquier solucion corresponde un valor de la funcion objetivo
+Valor optimo: A una solucion optima corresponde el valor optimo de la funcion objetivo
+
+Programa Lineal Entero: Todas la variables tienen la restriccion de ser enteras
+Programa Lineal Binario: Cuando todas las variables son binarias
+Programa Lineal Mixto: Variables continuas y enteras
+Programa No-Lineal: Si al menos una restriccion o la funcion objetivo no es una combinacion lineal de variables
+
+
+Problema de Cementos
+Problema de la Dieta
+Problema de Particionamiento
+
+
+Variables Binarias y Restricciones Logicas:
+
+x_i = {
+	1 	si se invierte en el proyecto i \in P
+	0   caso contrario
+}
+
+	CASO 1: No se puede invertir en mas de N proyectos
+		\sum_{i} x_i <= N
+
+	CASO 2: Se debe invertir en un minimo de N proyectos
+		\sum_{i} x_i >= N
+
+	CASO 3: Si se invierte en el proyecto 1, entonces se invierte tambien en el proyecto 2
+		x1 <= x2
+		(x1 - x2) <= 0
+
+	CASO 4: Los proyectos 1 y 2 son incompatibles. Si se invierte en un proyecto, no se puede invertir en el otro
+		x_1 + x_2 <= 1
+
+	CASO 5: Se debe invertir al menos en uno de los proyectos 1 y 2
+		x_1 + x_2 >= 1
+
+	CASO 6: Si se invierte en el proyecto 1, entonces se debe tambien invertir en los proyectos 2 y 3
+		x_1 <= x_2
+		x_1 <= x_3
+			o
+		x_2 + x_3 >= 2x_1
+
+	CASO 7: Si se invierte en el proyecto 1, entonces se debe tambien invertir en al menos uno de los proyectos 2 y 3
+		x_2 + x_3 >= x_1
+
+	CASO 8: Si se invierte al menos en uno de los proyectos 1 y 2, entonces se debe invertir tambien en el proyecto 3
+		x_1 <= x_3
+		x_2 <= x_3
+
+	CASO 9: Si se invierte en los dos proyectos 1 y 2, entonces se debe invertir en el proyecto 3
+		x_1 + x_2 <= 1 + x_3
+
+
+
+big-M
+	Consiste en utilizar un valor suficientemente grande en una restriccion para que en cierts condiciones esa restriccion sea satisfecha para cualquier valor que las variables de decision podrian tomar
+
+	big-M debería ser suficientemente grande para que las restricciones sean válidas,
+
+
+
+	1. **Definición:** Big-M usa un número grande para desactivar restricciones bajo ciertas condiciones.
+	2. **Usos clave:**
+
+	   * Activar/desactivar restricciones.
+	   * Modelar implicaciones lógicas.
+	   * Modelar disyunciones.
+	3. **Cuidado:** nunca uses un (M) demasiado grande; siempre busca cotas ajustadas.
+	4. **Formulaciones clásicas:**
+
+	   * (x \le M y).
+	   * (Ax \le b + M(1-y)).
+	   * Disyunción: una con (+My), otra con (+M(1-y)).
+
+
+
+
+
+
+
+Metodos Heuristicos
+	Reglas practicas de toma de decision
+	Maneras practicas de encontrar una solucion a un problema
+
+	P vs NP
+		P: solucion en tiempo polinomial
+		NP (non-deterministic polynomial time):
+			Problemas para los cuales existe un algoritmo para encontrar una solucion candidata
+
+			NP-hard
+				Tan dificiles como los NP-complete
+				TSP
+	
+	Espacio de Busqueda
+		Busqueda exhaustiva
+
+		Metodos heuristicos
+			Metodo de exploracion que explota aspectos especificos de un problema en particular
+		Metodos metaheuristicos
+			Metodos genericos de exploracion que se pueden aplicar a muchos problemas distintos
+				Recorrido simulado
+				Tabu Search
+				Evolutive Algorithms
+
+
+	Vecindad V(x): conjunto de soluciones obtenidas por una transformacion (o movimiento), por un conjunto de transformaciones
+		U (Operador de seleccion)
+			Random
+			Best Improvement (La que mas mejora la solucion)
+			First improvement (La primera que encuentro que mejora la solucion)
+	
+			2-Exchange (intercambiar ciudades)
+				Consiste en intercambiar dos elementos en la solucion actual para generar una nueva solucion
+			2-Opt
+				Consiste en eliminar dos aristas de la solucion actual y reconectarlas de manera diferente para generar una nueva solucion
+
+	Vecindad y tiempo de computacion
+		- Una vecindad grande permite la exploracion de mas soluciones, pero puede necesitar mas tiempo de computacion
+		- El tiempo de computacion depende de la manera de encodificar las soluciones, de la vecindad y del operador de seleccion
+		- Hay siempre vecindades mas economicas en tiempo de computacion que otras
+
+	Hill-Climbing
+		Seleccionar cada vez una solucion mejor que la solucion actual
+		Con Hill Climbing simple avanzas hacia el primer sendero que sube un poco más (cualquier mejora).
+	
+	Steepest Ascent Hill Climbing
+		Seleccionar cada vez la mejor solucion de la vecindad V(x)
+		Con Steepest Hill Climbing inspeccionas todos los senderos posibles y eliges el que sube más rápido.
+
+
+
+	HC y SAHC pueden terminar en optimos locales (una solucion que no tiene mejor vecino)
+
+	Para escapar del optimo local
+		Probabilistic Hill Climbing
+			Podemos introducir aleatoriedad en el algoritmo para aceptar soluciones peores que la solucion actual con una cierta probabilidad
+		Hill Climbing with Random Restarts
+			Repetir el algoritmo varias veces desde distintas soluciones iniciales aleatorias
+		Iterated Local Search
+			En lugar de generar aleatoriamente una solucion inicial, buscamos una solucion fuera de la optima local actual, pero "no tan lejos", se puede hacer con la perturbacion del optimo local
+		Variable Neighborhood Search
+			Utilizar varias vecindades (por ejemplo V_1, V_2, ..., V_n).
+			Empezar con la vecindad V_1.
+			Cada vez que llegamos a un óptimo local con una vecindad V_i, pasamos a la vecindad V_{i+1}.
+			Cada vez que salimos de un óptimo local, volvemos a la vecindad V_1.
+			El algoritmo termina cuando no se puede salir del óptimo local utilizando la vecindad V_n.
+			
+
+
+	Intensificacion vs Diversificacion / Explotacion vs Exploracion
+	- En fase de intensificacion, la busqueda se limita a la exploracion de vecinos de una solucion ya prometedora
+		- Mucha: Riesgo de optimos locales
+	- En fase de diversificacion, intentamos visitar otras regiones del espacio de busqueda
+		- Mucha: Riesgo de visita demasiado aleatoria
+
+
+	Metodos de construccion (En el caso del problema de Bin-Packing)
+		Next-Fit
+			Abrir un contenedor. Colocar objetos 1 por 1 en el contenedor actual hasta que no quepa el siguiente objeto. Abrir un nuevo contenedor y repetir hasta colocar todos los objetos.
+		First-Fit
+			Para cada objeto, colocarlo en el primer contenedor que tenga suficiente espacio. Si no hay ninguno, abrir un nuevo contenedor.
+		First-Fit Decreasing
+			Ordenar los objetos en orden decreciente de tamaño. Aplicar First-Fit.
+
+	TSP
+		Nearest Neighbor
+			Seleccionar aleatoriamente un punto inicial. Seleccionar el punto mas cercano del ultimo punto agregado (punto actual)
+		Farthest insertion
+			Seleccionar los 2 punto mas alejados y hacer un ciclo entre esos 2 puntos. Luego, seleccionar el punto mas alejado del ciclo actual y agregarlo en la posicion que minimice el incremento del costo total del ciclo. Repetir hasta agregar todos los puntos
+		Cheapest Insertion
+			Seleccionar aleatoriamente un punto inicial. Luego, seleccionar el punto que al insertarlo en la posicion que minimice el incremento del costo total del ciclo. Repetir hasta agregar todos los puntos
+		Convex Hull insertion
+		Greatest Angle insertion
+
+
+	Vecindad conexa
+		Una vecindad V es conexa si es posible ir de cualquier solucion a cualquier otra solucion mediante una secuencia finita de movimientos dentro de V
+		E.g.
+			Conexa: 2-Exchange en TSP
+			No conexa: dividir el espacio de busqueda en 2 partes que no se comunican entre si
+
+
+Metodos MetaHeuristicos
+
+	Recocido simulado (metodo de busqueda local)
+		Basado en el metodo de Metropolis-Hastings donde un movimiento se acepta siempre cuando mejora la solucion actual y se acepta con una cierta probabilidad cuando empeora la solucion actual
+
+		La probabilidad de aceptar una solucion peor disminuye con el tiempo (enfriamiento)
+		La probabilidad depende de un valor de temperatura T que disminuye con el tiempo
+
+		En un problema de minimizacion:
+			Prob(aceptacion) = {
+				1 					si delta < 0
+				exp(-delta / T)		si delta >= 0
+			}
+
+			Donde delta = costo_nuevo - costo_actual
+
+			Cuando T es alta es mas probable aceptar soluciones peores
+			Cuando T es baja es menos probable aceptar soluciones peores
+
+		Algoritmo:
+			1. Inicializar una solucion x actual
+			2. Inicializar la temperatura T
+			3. Mientras no se cumpla el criterio de parada (e.g. T < T_min o maximo numero de iteraciones)
+				4. Generar una solucion x nueva en la vecindad V(x actual)
+				5. Calcular delta = costo_nuevo - costo_actual
+				6. Si delta < 0, aceptar x nueva como x actual
+				7. Si delta >= 0, aceptar x nueva como x actual con probabilidad exp(-delta / T)
+				8. Actualizar la temperatura T segun un plan de enfriamiento (cooling schedule)
+
+		Cooling Schedule:
+			Ajuste de la temperatura T a lo largo del tiempo
+				- Lineal: T = T - alpha
+				- Geometrico: T = T * alpha
+				- Logaritmico: T = T / log(1 + k)
+
+		Extensiones:
+			- MultiStart/Iterated Local Search: Reiniciar el algoritmo varias veces desde distintas soluciones iniciales
+			- Multiples Recocidos Simulados: Ejecutar varios recocidos simulados en paralelo o secuencialmente y seleccionar la mejor solucion encontrada
+
+		Conclusion:
+			- Metodo simple y robusto
+			- Costoso en tiempo de calculo. Lento
+			- Requiere ajuste de parametros (temperatura inicial, plan de enfriamiento, criterio de parada)
+
+
+
+	Tabu Search (metodo de busqueda local)
+		Estrategia para evitar los optimos locales con prohibicion temporal de porciones del espacio de busqueda
+		Utiliza la historia de la busqueda sin memorizar todo
+
+		Idea: Escapar de los optimos locals por limitacion de ciclos
+			Utilizar memoria de corto plazo:
+				- Soluciones recientes
+				- Movimientos recientes
+				- Atributos de soluciones o movimientos recientes
+			Tabu List:
+				- Lista de soluciones, movimientos o atributos prohibidos temporalmente
+				- Longitud de la lista: parametro a ajustar (tabu tenure)
+					- Puede ser estatico o dinamico
+
+			Atributo Tabu:
+				Prohibir un traibuto (propiedad de una solucion o de un movimiento)
+					- Prohibir la asignacion del valor 1 a una variable binaria x_i durante k iteraciones
+					- Prohibir la presencia de una arista en una solucion TSP
+					- Prohibir el cambio de valor de variable entera x_i
+					- Prohibir agregar o remover un arista en una solucion del TSP
+
+			Criterio de aspiracion:
+				Permitir movimientos tabu si cumplen un criterio especial (e.g. si mejoran la mejor solucion encontrada hasta el momento)
+		Algoritmo:
+			1. Inicializar una solucion x actual
+			2. Inicializar la Tabu List
+			3. Mientras no se cumpla el criterio de parada (e.g. maximo numero de iteraciones)
+				4. Generar la vecindad V(x actual)
+				5. Seleccionar la mejor solucion x nueva en V(x actual) que no este en la Tabu List o que cumpla el criterio de aspiracion
+				6. Actualizar la Tabu List (agregar atributos de x nueva y remover los mas antiguos si es necesario)
+				7. Actualizar x actual = x nueva
+		
+		Conclusion:
+			- Metodo poderoso y flexible
+			- Requiere ajuste de parametros (longitud de la Tabu List, criterio de aspiracion)
+
+
+
+	GRASP (Greedy Randomized Adaptive Search Procedure | metodo greedy de construccion aleatorizado)
+		- Es un metodo de construccion, no un metodo de busqueda local
+			- En un metodo greedy se elige como elemento siguiente al mejor elemento disponible segun un criterio
+		Idea: Aplicar un metodo greedy pero introduciendo aleatoriedad en la seleccion de los elementos (mejores candidatos) en lugar de elegir siempre el mejor elemento disponible. Se restringe la seleccion a un conjunto de los mejores candidatos (Restricted Candidate List | RCL) y se elige aleatoriamente entre ellos
+			- Alternativa 1: Tournament Selection. Seleccionar el mejor elemento de una seleccion aleatoria de t candidatos.
+			- Alternativa 2: Fitness-Proportionate Selection (Roulette Selection). Seleccionar un elemento con probabilidad proporcional a su calidad (fitness)
+
+		Algoritmo:
+			1. Inicializar una solucion vacia x
+			2. Mientras la solucion x no este completa
+				3. Generar el conjunto de candidatos C disponibles para agregar a x
+				4. Evaluar la calidad (fitness) de cada candidato c en C
+				5. Construir la Restricted Candidate List (RCL) con los mejores candidatos segun su calidad
+				6. Seleccionar aleatoriamente un candidato c* de la RCL
+				7. Agregar c* a la solucion x
+			8. Retornar la solucion x
+		
+		Conclusion:
+			- Metodo simple y rapido
+			- Requiere ajuste de parametros (tamaño de la RCL, criterio de calidad)
+			- Puede ser combinado con metodos de busqueda local para mejorar la solucion inicial
+
+# Métodos Heurísticos: Construcción vs Mejora
+
+| Tipo de Método         | Métodos                                                                                   | Descripción breve                                                                 |
+|-------------------------|-------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| **Construcción**        | **Bin Packing**: Next-Fit, First-Fit, First-Fit Decreasing                                | Construyen una solución inicial colocando objetos en contenedores siguiendo reglas prácticas. |
+|                         | **TSP**: Nearest Neighbor, Farthest Insertion, Cheapest Insertion, Convex Hull Insertion, Greatest Angle Insertion | Generan soluciones iniciales para rutas o ciclos mediante reglas greedy o geométricas. |
+|                         | **GRASP** (Greedy Randomized Adaptive Search Procedure)                                   | Método de construcción aleatorizado que combina greedy + aleatoriedad en la RCL.  |
+| **Mejora (Búsqueda Local)** | Hill-Climbing, Steepest Ascent Hill-Climbing                                            | Mejoran iterativamente la solución actual buscando mejores vecinos.                |
+|                         | Probabilistic Hill-Climbing, Hill-Climbing with Random Restarts                           | Variantes para escapar de óptimos locales mediante probabilidad o reinicios.       |
+|                         | Iterated Local Search, Variable Neighborhood Search                                       | Usan perturbaciones o múltiples vecindades para escapar de óptimos locales.        |
+| **Metaheurísticas (Mejora generalizada)** | Recocido Simulado (Simulated Annealing)                                                 | Acepta soluciones peores con probabilidad decreciente (enfriamiento).              |
+|                         | Tabu Search                                                                              | Usa memoria (Tabu List) para evitar ciclos y escapar de óptimos locales.           |
+|                         | Algoritmos Evolutivos                                                                    | Métodos poblacionales (selección, cruce, mutación) para explorar el espacio de búsqueda. |
+
