@@ -62,32 +62,7 @@ Problema de ruteo de vehiculos con multiples compartimento, flota heterogenea y 
         Las distancias entre el almacén y los clientes, así como entre clientes, se calculan utilizando la distancia euclidiana a partir de sus coordenadas (x, y) expresadas en kilómetros. 
         Además, se establece que las cisternas pueden iniciar sus rutas a partir de las 04:00 horas y deben retornar al almacén antes de las 09:00 horas del mismo día.
 
-1. Conjuntos
-    - C: Conjunto de clientes, indexado por i y j. C = {1, ..., n} donde n es el número total de clientes en la instancia.
-    - D: Conjunto del depósito, representado por el nodo 0, desde donde inician y terminan las rutas de las cisternas.
-    - K: Conjunto de tipos de cisternas, indexado por k. K = {1, 2} donde: 1 = Tipo 1, 2 = Tipo 2.
-    - V: Conjunto de vehículos disponibles, indexado por v. V = {1, ..., 20} para cada tipo de cisterna.
-    - P: Conjunto de productos (Gasohol, Diésel), indexado por p. P = {G, D} donde: G = Gasohol, D = Diésel.
-
-2. Parametros
-    - d_ij: Distancia en kilómetros entre el cliente i y el cliente j, calculada usando la distancia euclidiana.
-    - Q_kp: Capacidad del compartimento para el producto p en una cisterna de tipo k (en galones).
-    - F_k: Costo fijo de alquiler de una cisterna de tipo k (en US$).
-    - C_k: Costo por kilómetro recorrido por una cisterna de tipo k (en US$ por km).
-    - S_ip: Demanda del cliente i para cada producto p (en galones).
-    - [E_i, L_i]: Ventana de tiempo del cliente i, donde E_i es el tiempo de inicio y L_i es el tiempo límite para la entrega (en minutos desde las 04:00 horas).
-    - T_p: Tiempo de descarga para el producto p en un cliente (en minutos). T_G = 5 minutos, T_D = 5 minutos, si ambos productos se entregan en la misma visita, el tiempo total es T_G + T_D = 10 minutos.
-    - V_max: Velocidad máxima constante de las cisternas (60 km/h).
-
-3. Variables de Decision:
-    - x_ijkv: Variable binaria que indica si la cisterna v de tipo k viaja directamente del cliente i al cliente j.
-    - y_ikvp: Variable binaria que indica si la cisterna v de tipo k atiende al cliente i con el producto p.
-    - t_ikv: Tiempo de llegada de la cisterna v de tipo k al cliente i (en minutos desde las 04:00 horas).
-    - q_kvp: Cantidad de producto p cargada en la cisterna v de tipo k (en galones).
-
-4. Funcion Objetivo: Minimizar el costo diario de operacion, considerando el alquiler de cisternas y la distancia recorrida por los vehiculos, garantizando la atención completa de todos los clientes dentro de sus ventanas de tiempo.
-    Min Z =    Σ (F_k * Σ x_0jkv)    +    Σ (C_k * d_ij * x_ijkv)               for all k in K, v in V, i,j in C U {0}
-            (COSTO FIJO DE ALQUILER)   (COSTO VARIABLE POR DISTANCIA)
+Funcion Objetivo: Minimizar el costo diario de operacion, considerando el alquiler de cisternas y la distancia recorrida por los vehiculos, garantizando la atención completa de todos los clientes dentro de sus ventanas de tiempo.
 """
 
 import os, sys
@@ -1049,12 +1024,43 @@ class SolverTabuSearchMCVRPTW:
         `pi` is randomly chosen in [0, sqrt(n)], where n is the number of clients in the solution.
 
         The removed clients are then reinserted in the solution using a greedy insertion heuristic.
-        Each clients is inserted into the route which minimizes the increase in the total routing cost (having into account the schedule, vehicle, and capacity constraints).
+        Each clients is inserted into the route which minimizes the increase in the total routing cost (having into account the schedule, vehicle, and capacity constraints). [Parallelize operations for speedup]
+
+        We use the Generalized Insertion Procedure (GENI) to insert visits into routes or remove visits from routes. 
+        Together with the insertion or removal of a vertex, GENI applies a subset of 3-opt and 4-opt moves to the route.
         """
         pi = random.uniform(0, math.sqrt(self.n))
         return rutas
     
-    def tabu_search(self, rutas: List[Ruta]) -> List[Ruta]:
+    def tabu_search(self, rutas: List[Ruta], iteration: int, alpha: float = 1.0, beta: float = 1.0, gamma: float = 1.0) -> List[Ruta]:
+        """
+        The performance of the tabu search depends on the neighborhood structure, the handling of infeasible solutions, and the design of the short-term memory.
+
+        The proposed implementation startas from some initial solution and repeatedly moves to the best non-tabu neighbor. 
+        The current solution may exceed, the capacity, lenght, or time window constraints.
+
+        
+        For a set of routes $s = {R_1, ldots, R_tau}$ we define its time (or distance) excess as:
+
+        $$D^+(s) = sum_{R in s} max{d(R) - D, 0}$$
+
+        and its capacity excess as:
+
+        $$C^+ = sum_{R in s} max{max_{i in [m]} Delta c_i, 0}$$
+
+        for $Delta c = (Delta c_1, ldots, Delta c_m) = c(R) - C$.
+
+        The objective value of solution $s$ is then:
+
+        $$F(s) = d(s) + alpha C^+(s) + beta D^+(s)$$
+
+        where $alpha$ and $beta$ are penalties for each unit of capacity and time excess respectively. Initially, $alpha = beta = 0$.
+        We will set $gamma$ as the penalty for each unit of time window violation.
+
+        The penalties are then updated to allow strategic oscillation between feasible and infeasible solutions.
+        Every time the curren solution exceeds the capacity, lenght, or time window constraints, the corresponding penalty is increased by a factor of $(1 + delta)$, with $delta > 0$; otherwise, it is decreased by a factor of $(1 + delta)$.
+        """
+
         return rutas
 
     # Utilities for output and visualization
