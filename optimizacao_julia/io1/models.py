@@ -187,7 +187,7 @@ class SolutionVisualizer:
                     minuto = tiempo_llegada % 60
                     cliente = self.instance.cliente_por_id(cliente_id)
                     ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
-                    print(f"      - Cliente {cliente_id}: {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
+                    print(f"      - Cliente {cliente_id} ({cliente.x:.1f}, {cliente.y:.1f}): {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
                 print(f"    Entregas por cliente:")
                 for cliente_id, productos in ruta.productos_entregados.items():
                     prods_str = ", ".join(productos)

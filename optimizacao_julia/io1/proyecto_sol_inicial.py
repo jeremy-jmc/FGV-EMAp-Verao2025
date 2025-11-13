@@ -143,7 +143,7 @@ def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 
 df = (
-    pd.read_csv('./instancias/25_clientes_1.csv')
+    pd.read_csv('./instancias/100_clientes.csv')
     .reset_index(drop=False)
 )
 
@@ -225,7 +225,7 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
     # Mejora con "2-opt" bidireccional
     rutas = sweep_solver.iterative_improving_sweep(rutas)
     visualizer.imprimir_solucion(rutas, 1)
-    # visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
+    visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
 
     # Iterated Tabu Search
     tabu_solver = SolverTabuSearchMCVRPTW(sweep_solver)
@@ -247,7 +247,7 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
             print(f"  [Iteración {iteration}] Nueva mejor solución: ${best_cost:,.2f}")
     
     visualizer.imprimir_solucion(best_solution, 2)
-    # visualizer.visualizar_rutas(best_solution, "Iterated Tabu Search - Final Solution")
+    visualizer.visualizar_rutas(best_solution, "Iterated Tabu Search - Final Solution")
     return best_solution, best_cost
 
 
@@ -257,8 +257,8 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
 
 best_cost_solution = float('inf')
 best_config = {}
-for cc in [True, False]:
-    for sd in [True, False]:
+for cc in [False, True]:
+    for sd in [False, True]:
         try:
             print(f"\n--- Clockwise: {cc} | Split Demands: {sd} ---")
             rutas_solucion, costo = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=cc, split_demands=sd, I=50)
@@ -271,5 +271,7 @@ for cc in [True, False]:
             import traceback
             traceback.print_exc()
             raise e
+    #     break
+    # break
 
 print(f"\n=== Mejor configuración encontrada: Clockwise={best_config['clockwise']}, Split Demands={best_config['split_demands']} con costo total: ${best_cost_solution:,.2f} ===")
