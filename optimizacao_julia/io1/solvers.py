@@ -176,13 +176,30 @@ class RouteEvaluator:
         distancia = self.calcular_distancia_ruta(clientes)
         costo = cisterna.costo_fijo + cisterna.costo_km * distancia
         
-        tiempos_llegada = [info['tiempos_llegada'][cid] for cid in clientes]
+        # Handle infeasible routes (info might not have all keys)
+        if factible and 'tiempos_llegada' in info:
+            tiempos_llegada = [info['tiempos_llegada'][cid] for cid in clientes]
+            carga_gasohol = info['carga_gasohol']
+            carga_diesel = info['carga_diesel']
+        else:
+            # For infeasible routes, calculate basic info
+            tiempos_llegada = [0.0] * len(clientes)
+            carga_gasohol = sum(
+                self.instance.cliente_por_id(cid).demanda_gasohol 
+                for cid in clientes 
+                if 'G' in productos_por_cliente[cid]
+            )
+            carga_diesel = sum(
+                self.instance.cliente_por_id(cid).demanda_diesel 
+                for cid in clientes 
+                if 'D' in productos_por_cliente[cid]
+            )
         
         return Ruta(
             cisterna=cisterna,
             clientes=clientes,
-            carga_gasohol=info['carga_gasohol'],
-            carga_diesel=info['carga_diesel'],
+            carga_gasohol=carga_gasohol,
+            carga_diesel=carga_diesel,
             distancia_total=distancia,
             tiempo_total=tiempo_total,
             costo_total=costo,
@@ -693,9 +710,12 @@ class SolverTabuSearchMCVRPTW:
         """
         self.sweep = sweep_solver
         self.best_solution = copy.deepcopy(sweep_solver.best_solution)
-        self.alpha = 1.0
-        self.betha = 1.0
-        self.rho = 1.0
+        self.alpha = 0.0  # Penalty for capacity violations (initially 0)
+        self.beta = 0.0   # Penalty for distance/time violations (initially 0)
+        self.rho = 10.0   # Penalty for time window violations (fixed)
+        self.tabu_list = []  # List of tabu moves: [(vertex, products_tuple, source_route_idx, expiration_iteration)]
+        self.incumbent_cost = sum(r.costo_total for r in self.best_solution)
+        self.r_prime = len(self.best_solution)  # Initial number of routes
     
     def _build_p_neighborhoods(self, clientes: List[int], p: int) -> Dict[int, List[int]]:
         """Construye p-vecindarios para cada cliente basado en distancias."""
@@ -1051,11 +1071,343 @@ class SolverTabuSearchMCVRPTW:
         
         return rutas_perturbadas
     
-    def _best_shift_move(self, rutas: List[Ruta]):
+    def _calculate_violations(self, rutas: List[Ruta]) -> Dict[str, float]:
+        """
+        Calcula las violaciones de restricciones de una solución.
+        
+        Returns:
+            Dict con 'capacity_excess', 'distance_excess', 'tw_excess', y 'has_violations'
+        """
+        capacity_excess = 0.0
+        distance_excess = 0.0
+        tw_excess = 0.0
+        
+        for ruta in rutas:
+            # Capacity violations
+            delta_gasohol = max(ruta.carga_gasohol - ruta.cisterna.cap_gasohol, 0)
+            delta_diesel = max(ruta.carga_diesel - ruta.cisterna.cap_diesel, 0)
+            capacity_excess += max(delta_gasohol, delta_diesel)
+            
+            # Distance/time violations (assuming max time is depot closing time)
+            max_tiempo = self.sweep.instance.depot.ventana_fin
+            tiempo_excess = max(ruta.tiempo_total - max_tiempo, 0)
+            distance_excess += tiempo_excess
+            
+            # Time window violations
+            tiempo_actual = self.sweep.instance.depot.ventana_inicio
+            nodo_actual = 0
+            
+            for idx, cliente_id in enumerate(ruta.clientes):
+                cliente = self.sweep.instance.cliente_por_id(cliente_id)
+                
+                tiempo_viaje = self.sweep.instance.tiempo_viaje(nodo_actual, cliente_id)
+                tiempo_llegada = tiempo_actual + tiempo_viaje
+                
+                # Penalty for arriving after time window closes
+                if tiempo_llegada > cliente.ventana_fin:
+                    tw_excess += tiempo_llegada - cliente.ventana_fin
+                
+                # If arriving early, wait
+                if tiempo_llegada < cliente.ventana_inicio:
+                    tiempo_llegada = cliente.ventana_inicio
+                
+                tiempo_servicio = self.sweep.evaluator.calcular_tiempo_servicio(
+                    ruta.productos_entregados[cliente_id]
+                )
+                tiempo_actual = tiempo_llegada + tiempo_servicio
+                nodo_actual = cliente_id
+        
+        has_violations = (capacity_excess > 0 or distance_excess > 0 or tw_excess > 0)
+        
+        return {
+            'capacity_excess': capacity_excess,
+            'distance_excess': distance_excess,
+            'tw_excess': tw_excess,
+            'has_violations': has_violations
+        }
+    
+    def _calculate_penalized_objective(self, rutas: List[Ruta]) -> float:
+        """
+        Calcula la función objetivo penalizada: F(s) = d(s) + alpha*C+(s) + beta*D+(s) + rho*TW+(s)
+        """
+        violations = self._calculate_violations(rutas)
+        
+        # Base cost (distance-based)
+        base_cost = sum(r.costo_total for r in rutas)
+        
+        # Penalized objective
+        penalized_cost = (
+            base_cost + 
+            self.alpha * violations['capacity_excess'] +
+            self.beta * violations['distance_excess'] +
+            self.rho * violations['tw_excess']
+        )
+        
+        return penalized_cost
+    
+    def _build_nearest_routes(self, rutas: List[Ruta]) -> Dict[int, List[int]]:
+        """
+        Construye una lista de rutas cercanas para cada cliente.
+        
+        Returns:
+            Dict {cliente_id: [lista de índices de rutas cercanas]}
+        """
+        if not rutas:
+            return {}
+        
+        # Calcular distancia promedio por visita
+        total_distance = sum(r.distancia_total for r in rutas)
+        total_visits = sum(len(r.clientes) for r in rutas)
+        d_hat = total_distance / total_visits if total_visits > 0 else 1.0
+        
+        nearest_routes = {}
+        all_clients = set()
+        for ruta in rutas:
+            all_clients.update(ruta.clientes)
+        
+        for cliente_id in all_clients:
+            threshold = 2 * d_hat
+            found_routes = []
+            
+            # Aumentar threshold hasta encontrar al menos una ruta
+            while len(found_routes) == 0 and threshold < 1000:
+                found_routes = []
+                for route_idx, ruta in enumerate(rutas):
+                    # Buscar si la ruta tiene algún cliente cercano
+                    for other_client in ruta.clientes:
+                        dist = self.sweep.instance.distancia(cliente_id, other_client)
+                        if dist <= threshold:
+                            found_routes.append(route_idx)
+                            break
+                
+                if len(found_routes) == 0:
+                    threshold *= 1.2  # Aumentar 20%
+            
+            nearest_routes[cliente_id] = list(set(found_routes))  # Remover duplicados
+        
+        return nearest_routes
+    
+    def _apply_shift_move(self, rutas: List[Ruta], source_idx: int, dest_idx: int,
+                         vertex: int, products: Tuple[str, ...]) -> Optional[List[Ruta]]:
+        """
+        Aplica un movimiento de shift (relocación de demandas).
+        
+        Args:
+            rutas: Solución actual
+            source_idx: Índice de la ruta origen
+            dest_idx: Índice de la ruta destino
+            vertex: Cliente a mover
+            products: Tupla de productos a mover ('G', 'D', o ambos)
+        
+        Returns:
+            Nueva solución o None si el movimiento no es factible
+        """
+        new_rutas = copy.deepcopy(rutas)
+        source_route = new_rutas[source_idx]
+        dest_route = new_rutas[dest_idx]
+        
+        if vertex not in source_route.clientes:
+            return None
+        
+        # Determinar productos que quedan en origen
+        original_products = source_route.productos_entregados[vertex]
+        products_list = list(products)
+        remaining_products = [p for p in original_products if p not in products_list]
+        
+        # Caso 1: Mover todos los productos (remover vértice completamente)
+        if len(remaining_products) == 0:
+            # Remover de ruta origen
+            source_clients = [c for c in source_route.clientes if c != vertex]
+            
+            if len(source_clients) > 0:
+                # Reconstruir ruta origen sin el vértice (podría optimizarse con GENI, pero por simplicidad lo dejamos así)
+                source_productos_map = {c: source_route.productos_entregados[c] for c in source_clients}
+                vehiculos_usados = contar_vehiculos(new_rutas[:source_idx] + new_rutas[source_idx+1:])
+                
+                source_cisterna = self.sweep.evaluator.seleccionar_mejor_cisterna(
+                    source_clients, source_productos_map, vehiculos_usados
+                )
+                
+                if source_cisterna:
+                    new_rutas[source_idx] = self.sweep.evaluator.crear_ruta_objeto(
+                        source_clients, source_cisterna, source_productos_map
+                    )
+                else:
+                    return None
+            else:
+                # Ruta origen queda vacía, la eliminamos
+                new_rutas.pop(source_idx)
+                if dest_idx > source_idx:
+                    dest_idx -= 1
+        
+        # Caso 2: Split de demandas (mantener algunos productos en origen)
+        else:
+            source_route.productos_entregados[vertex] = remaining_products
+            # No necesita optimización según el paper
+        
+        # Insertar en ruta destino
+        if dest_idx >= len(new_rutas):
+            return None
+            
+        dest_route = new_rutas[dest_idx]
+        
+        # Si el vértice ya existe en destino, solo agregar productos
+        if vertex in dest_route.clientes:
+            dest_productos_map = dest_route.productos_entregados.copy()
+            dest_productos_map[vertex] = list(set(dest_productos_map[vertex] + products_list))
+            
+            # Verificar factibilidad
+            factible, _, _ = self.sweep.evaluator.verificar_factibilidad_ruta(
+                dest_route.clientes, dest_route.cisterna, dest_productos_map
+            )
+            
+            if factible:
+                new_rutas[dest_idx] = self.sweep.evaluator.crear_ruta_objeto(
+                    dest_route.clientes, dest_route.cisterna, dest_productos_map
+                )
+            else:
+                return None
+        else:
+            # Insertar nuevo vértice usando GENI
+            new_rutas_temp = new_rutas[:dest_idx] + [dest_route] + new_rutas[dest_idx+1:]
+            new_rutas_temp = self.geni_insertion(new_rutas_temp, vertex, p=5)
+            
+            # Actualizar productos entregados
+            for ruta in new_rutas_temp:
+                if vertex in ruta.clientes:
+                    ruta.productos_entregados[vertex] = products_list
+            
+            new_rutas = new_rutas_temp
+        
+        return new_rutas
+    
+    def _is_tabu(self, vertex: int, products: Tuple[str, ...], source_idx: int, 
+                iteration: int) -> bool:
+        """
+        Verifica si un movimiento es tabú.
+        
+        Returns:
+            True si el movimiento está en la lista tabú y no ha expirado
+        """
+        for tabu_vertex, tabu_products, tabu_source, expiration in self.tabu_list:
+            if (tabu_vertex == vertex and 
+                tabu_products == products and 
+                tabu_source == source_idx and
+                iteration < expiration):
+                return True
+        return False
+    
+    def _update_tabu_list(self, vertex: int, products: Tuple[str, ...], 
+                         source_idx: int, tenure: int, iteration: int):
+        """Actualiza la lista tabú agregando un nuevo movimiento prohibido."""
+        expiration = iteration + tenure
+        self.tabu_list.append((vertex, products, source_idx, expiration))
+        
+        # Limpiar movimientos expirados
+        self.tabu_list = [(v, p, s, e) for v, p, s, e in self.tabu_list if e > iteration]
+    
+    def _best_shift_move(self, rutas: List[Ruta], iteration: int, tenure: int) -> List[Ruta]:
+        """
+        Encuentra y aplica el mejor movimiento de shift (no tabú o con aspiración).
+        
+        Returns:
+            Nueva solución después de aplicar el mejor movimiento
+        """
+        if not rutas:
+            return rutas
+        
+        nearest_routes = self._build_nearest_routes(rutas)
+        
+        best_solution = None
+        best_objective = float('inf')
+        best_move = None
+        
+        # Generar y evaluar todos los movimientos candidatos
+        for source_idx, source_route in enumerate(rutas):
+            for vertex in source_route.clientes:
+                products_in_source = source_route.productos_entregados[vertex]
+                
+                # Generar subconjuntos de productos (no vacíos)
+                # Posibles movimientos: solo G, solo D, o ambos G y D
+                product_subsets = []
+                if 'G' in products_in_source:
+                    product_subsets.append(('G',))
+                if 'D' in products_in_source:
+                    product_subsets.append(('D',))
+                if 'G' in products_in_source and 'D' in products_in_source:
+                    product_subsets.append(('G', 'D'))
+                
+                # Para cada subconjunto de productos
+                for products_tuple in product_subsets:
+                    # Obtener rutas destino candidatas
+                    dest_routes = nearest_routes.get(vertex, [])
+                    
+                    for dest_idx in dest_routes:
+                        if dest_idx == source_idx:
+                            continue  # No mover a la misma ruta
+                        
+                        # Verificar si es tabú
+                        is_tabu_move = self._is_tabu(vertex, products_tuple, source_idx, iteration)
+                        
+                        # Aplicar movimiento
+                        new_solution = self._apply_shift_move(
+                            rutas, source_idx, dest_idx, vertex, products_tuple
+                        )
+                        
+                        if new_solution is None:
+                            continue
+                        
+                        # Calcular objetivo penalizado
+                        objective = self._calculate_penalized_objective(new_solution)
+                        
+                        # Criterio de aspiración: aceptar si mejora el incumbent
+                        aspiration = (objective < self.incumbent_cost)
+                        
+                        # Actualizar mejor movimiento
+                        if not is_tabu_move or aspiration:
+                            if objective < best_objective:
+                                best_objective = objective
+                                best_solution = new_solution
+                                best_move = (vertex, products_tuple, source_idx)
+        
+        # Si se encontró un movimiento válido, aplicarlo y actualizar tabú
+        if best_solution is not None and best_move is not None:
+            vertex, products_tuple, source_idx = best_move
+            self._update_tabu_list(vertex, products_tuple, source_idx, tenure, iteration)
+            
+            # Actualizar incumbent si es mejor
+            violations = self._calculate_violations(best_solution)
+            if not violations['has_violations']:
+                actual_cost = sum(r.costo_total for r in best_solution)
+                if actual_cost < self.incumbent_cost:
+                    self.incumbent_cost = actual_cost
+                    self.best_solution = copy.deepcopy(best_solution)
+            
+            return best_solution
+        
+        # Si no se encontró ningún movimiento, retornar solución actual
         return rutas
 
-    def _update_penalties(self, factor: float):
-        return
+    def _update_penalties(self, violations: Dict[str, float], delta: float):
+        """
+        Actualiza los parámetros de penalización para oscilación estratégica.
+        
+        Args:
+            violations: Dict con información de violaciones
+            delta: Factor de ajuste aleatorio
+        """
+        if violations['has_violations']:
+            # Incrementar penalizaciones
+            if violations['capacity_excess'] > 0:
+                self.alpha = max(1.0, self.alpha * (1 + delta))
+            if violations['distance_excess'] > 0:
+                self.beta = max(1.0, self.beta * (1 + delta))
+        else:
+            # Decrementar penalizaciones (pero no por debajo de 0)
+            self.alpha = max(0.0, self.alpha / (1 + delta))
+            self.beta = max(0.0, self.beta / (1 + delta))
+        
+        # rho permanece constante
 
     def tabu_search(self, rutas: List[Ruta], iteration: int) -> List[Ruta]:
         """
@@ -1068,6 +1420,9 @@ class SolverTabuSearchMCVRPTW:
         For a set of routes $s = {R_1, ldots, R_tau}$ we define its time (or distance) excess as:
 
         $$D^+(s) = sum_{R in s} max{d(R) - D, 0}$$
+
+        its time window excess as:
+        $$TW^+ = sum_{R in s} sum_{v in R} max{TW_v - l_v, 0}$$
 
         and its capacity excess as:
 
@@ -1105,12 +1460,18 @@ class SolverTabuSearchMCVRPTW:
             The tabu tenure `tau` is randomly selected in `[1, sqrt(n*r_prime)]`, where `n` is the number of clients in the solution, and `r_prime` is the number of routes in the initial solution.
             We use a single aspiration criterion: if a move is able to improve the incumbent it is performed even when tabu.
         """
-        gamma = random.random()
-        r_prime = len(rutas)
-        thau = random.randint(1, int(math.sqrt(len(self.sweep.instance.clientes) * r_prime)))
+        # Calculate tabu tenure
+        n = len(self.sweep.instance.clientes)
+        tau = random.randint(1, int(math.sqrt(n * self.r_prime)))
+        
+        # Find and apply best shift move
+        new_rutas = self._best_shift_move(rutas, iteration, tau)
+        
+        # Calculate violations and update penalties
+        violations = self._calculate_violations(new_rutas)
+        delta = random.uniform(0.1, 0.3)  # Random factor for penalty updates
+        self._update_penalties(violations, delta)
+        
+        return new_rutas
 
-        rutas = self._best_shift_move(rutas)
-        self._update_penalties(factor=gamma)
-
-        return rutas
 

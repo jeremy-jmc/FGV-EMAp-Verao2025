@@ -207,6 +207,7 @@ class SolutionVisualizer:
             '#2EC4B6', '#E71D36', '#011627', '#C9ADA7'
         ]
         
+        plt.figure(figsize=(12, 9))
         costo_total = sum(r.costo_total for r in rutas)
         fig, ax = plt.subplots(figsize=(12, 9))
         

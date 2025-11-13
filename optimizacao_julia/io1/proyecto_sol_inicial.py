@@ -143,7 +143,7 @@ def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 
 df = (
-    pd.read_csv('./instancias/100_clientes.csv')
+    pd.read_csv('./instancias/25_clientes_1.csv')
     .reset_index(drop=False)
 )
 
@@ -164,7 +164,7 @@ df = (
     .rename(columns={'index': 'old_index'})
     .reset_index(drop=True).reset_index(drop=False)
 )
-display(df)
+# display(df)
 
 
 # -----------------------------------------------------------------------------
@@ -220,12 +220,12 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
     # Construcción inicial con Angular Sweep
     rutas = sweep_solver.forward_sweep()
     visualizer.imprimir_solucion(rutas, 1)
-    visualizer.visualizar_rutas(rutas, "Forward Sweep")
+    # visualizer.visualizar_rutas(rutas, "Forward Sweep")
 
     # Mejora con "2-opt" bidireccional
     rutas = sweep_solver.iterative_improving_sweep(rutas)
     visualizer.imprimir_solucion(rutas, 1)
-    visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
+    # visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
 
     # Iterated Tabu Search
     tabu_solver = SolverTabuSearchMCVRPTW(sweep_solver)
@@ -247,7 +247,7 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
             print(f"  [Iteración {iteration}] Nueva mejor solución: ${best_cost:,.2f}")
     
     visualizer.imprimir_solucion(best_solution, 2)
-    visualizer.visualizar_rutas(best_solution, "Perturbation Only")
+    # visualizer.visualizar_rutas(best_solution, "Iterated Tabu Search - Final Solution")
     return best_solution, best_cost
 
 
@@ -259,11 +259,17 @@ best_cost_solution = float('inf')
 best_config = {}
 for cc in [True, False]:
     for sd in [True, False]:
-        print(f"\n--- Clockwise: {cc} | Split Demands: {sd} ---")
-        rutas_solucion, costo = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=False, split_demands=False)
-        print(f"Solución final con costo total: ${costo:,.2f}")
-        if costo < best_cost_solution:
-            best_cost_solution = costo
-            best_config = {'clockwise': cc, 'split_demands': sd}
+        try:
+            print(f"\n--- Clockwise: {cc} | Split Demands: {sd} ---")
+            rutas_solucion, costo = tabu_search_mcvrptw(df, tipos_cisternas, clockwise=cc, split_demands=sd, I=50)
+            print(f"Solución final con costo total: ${costo:,.2f}")
+            if costo < best_cost_solution:
+                best_cost_solution = costo
+                best_config = {'clockwise': cc, 'split_demands': sd}
+        except Exception as e:
+            print(f"Error con configuración Clockwise={cc}, Split Demands={sd}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise e
 
 print(f"\n=== Mejor configuración encontrada: Clockwise={best_config['clockwise']}, Split Demands={best_config['split_demands']} con costo total: ${best_cost_solution:,.2f} ===")
