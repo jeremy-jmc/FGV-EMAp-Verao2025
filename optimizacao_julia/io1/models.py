@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict
 from dataclasses import dataclass
-
+import os
+from io import StringIO
+        
 
 # -----------------------------------------------------------------------------
 # Data Models
@@ -144,11 +146,24 @@ class SolutionVisualizer:
     def __init__(self, instance: ProblemInstance):
         self.instance = instance
     
-    def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1):
-        """Imprime la solución de forma legible."""
-        print("\n" + "=" * 80)
-        print("SOLUCIÓN")
-        print("=" * 80)
+    def imprimir_solucion(self, rutas: List[Ruta], verbosity: int = 1, phase_name: str = None, iterations: int = None, prefix: str = ""):
+        """Imprime la solución de forma legible y opcionalmente la guarda en un archivo.
+        
+        Args:
+            rutas: Lista de rutas de la solución
+            verbosity: Nivel de detalle (1=resumen, 2=detalle completo)
+            file_name: Nombre base del archivo (sin extensión)
+            iterations: Número de iteraciones del algoritmo
+        """
+        
+        output = StringIO()
+        def dual_print(text="", end="\n"):
+            print(text, end=end)
+            output.write(text + end)
+        
+        dual_print("\n" + "=" * 80)
+        dual_print("SOLUCIÓN")
+        dual_print("=" * 80)
         
         costo_total = sum(r.costo_total for r in rutas)
         distancia_total = sum(r.distancia_total for r in rutas)
@@ -157,43 +172,53 @@ class SolutionVisualizer:
         vehiculos_tipo_2 = sum(1 for r in rutas if r.cisterna.tipo == 2)
         
         if verbosity >= 1:
-            print(f"\n>>> RESUMEN GENERAL:")
-            print(f"  * Número de rutas: {len(rutas)}")
-            print(f"  * Costo total: ${costo_total:,.2f}")
-            print(f"  * Distancia total: {distancia_total:.2f} km")
-            print(f"  * Cisternas Tipo 1: {vehiculos_tipo_1}/{self.instance.num_vehiculos_por_tipo}", end="")
-            if vehiculos_tipo_1 > self.instance.num_vehiculos_por_tipo:
-                print(" !!! EXCEDE LÍMITE", end="")
-            print()
-            print(f"  * Cisternas Tipo 2: {vehiculos_tipo_2}/{self.instance.num_vehiculos_por_tipo}", end="")
-            if vehiculos_tipo_2 > self.instance.num_vehiculos_por_tipo:
-                print(" !!! EXCEDE LÍMITE", end="")
-            print()
+            dual_print(f"\n>>> RESUMEN GENERAL:")
+            dual_print(f"  * Número de rutas: {len(rutas)}")
+            dual_print(f"  * Costo total: ${costo_total:,.2f}")
+            dual_print(f"  * Distancia total: {distancia_total:.2f} km")
+            
+            excede_t1 = " !!! EXCEDE LÍMITE" if vehiculos_tipo_1 > self.instance.num_vehiculos_por_tipo else ""
+            dual_print(f"  * Cisternas Tipo 1: {vehiculos_tipo_1}/{self.instance.num_vehiculos_por_tipo}{excede_t1}")
+            
+            excede_t2 = " !!! EXCEDE LÍMITE" if vehiculos_tipo_2 > self.instance.num_vehiculos_por_tipo else ""
+            dual_print(f"  * Cisternas Tipo 2: {vehiculos_tipo_2}/{self.instance.num_vehiculos_por_tipo}{excede_t2}")
 
         if verbosity >= 2:    
-            print(f"\n>>> DETALLE DE RUTAS:")
+            dual_print(f"\n>>> DETALLE DE RUTAS:")
             for idx, ruta in enumerate(rutas, 1):
-                print(f"\n  Ruta #{idx}:")
-                print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
-                print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
-                print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
+                dual_print(f"\n  Ruta #{idx}:")
+                dual_print(f"    Cisterna: Tipo {ruta.cisterna.tipo}")
+                dual_print(f"    Secuencia: Depot → {' → '.join(map(str, ruta.clientes))} → Depot")
+                dual_print(f"    Carga: Gasohol={ruta.carga_gasohol:.0f}gal ({ruta.carga_gasohol/ruta.cisterna.cap_gasohol*100:.1f}%), "
                     f"Diésel={ruta.carga_diesel:.0f}gal ({ruta.carga_diesel/ruta.cisterna.cap_diesel*100:.1f}%)")
-                print(f"    Distancia: {ruta.distancia_total:.2f} km")
-                print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
-                print(f"    Costo: ${ruta.costo_total:,.2f}")
-                print(f"    Tiempos de llegada (min desde 04:00):")
+                dual_print(f"    Distancia: {ruta.distancia_total:.2f} km")
+                dual_print(f"    Tiempo: {ruta.tiempo_total:.1f} min")
+                dual_print(f"    Costo: ${ruta.costo_total:,.2f}")
+                dual_print(f"    Tiempos de llegada (min desde 04:00):")
                 for cliente_id, tiempo_llegada in zip(ruta.clientes, ruta.tiempos_llegada):
                     hora = 4 + tiempo_llegada // 60
                     minuto = tiempo_llegada % 60
                     cliente = self.instance.cliente_por_id(cliente_id)
                     ventana_str = f"[{4 + cliente.ventana_inicio//60:02.0f}:{cliente.ventana_inicio%60:02.0f} - {4 + cliente.ventana_fin//60:02.0f}:{cliente.ventana_fin%60:02.0f}]"
-                    print(f"      - Cliente {cliente_id} ({cliente.x:.1f}, {cliente.y:.1f}): {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
-                print(f"    Entregas por cliente:")
+                    dual_print(f"      - Cliente {cliente_id} ({cliente.x:.1f}, {cliente.y:.1f}): {tiempo_llegada:.1f} min ({hora:02.0f}:{minuto:02.0f}) | Ventana: {ventana_str}")
+                dual_print(f"    Entregas por cliente:")
                 for cliente_id, productos in ruta.productos_entregados.items():
                     prods_str = ", ".join(productos)
-                    print(f"      - Cliente {cliente_id}: {prods_str}")
+                    dual_print(f"      - Cliente {cliente_id}: {prods_str}")
             
-        print("\n" + "="*80)
+        dual_print("\n" + "="*80)
+        
+        if phase_name is not None and iterations is not None:
+            results_dir = os.path.join(os.path.dirname(__file__), 'results')
+            os.makedirs(results_dir, exist_ok=True)
+            
+            filename = f"{prefix}_phase_{phase_name}_it{iterations}_python.txt"
+            filepath = os.path.join(results_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(output.getvalue())
+            
+            print(f"[INFO] Solución guardada en: {filepath}")
 
     def visualizar_rutas(self, rutas: List[Ruta], caption: str = ""):
         """Visualiza las rutas en un mapa 2D."""

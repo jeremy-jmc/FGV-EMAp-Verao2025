@@ -56,3 +56,4 @@ optimizacao_julia/io1/past_projects
 optimizacao_julia/io1/misc
 __pycache__/
 .ipynb_checkpoints/
+results/

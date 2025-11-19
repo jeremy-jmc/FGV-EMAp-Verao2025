@@ -142,10 +142,12 @@ def split_client_demands(df: pd.DataFrame) -> pd.DataFrame:
 # Load and Preprocess Data
 # -----------------------------------------------------------------------------
 
+file_name = './instancias/25_clientes_1.csv'
 df = (
-    pd.read_csv('./instancias/100_clientes.csv')
+    pd.read_csv(file_name)
     .reset_index(drop=False)
 )
+file_summary = file_name.split('/')[-1].split('.')[0].replace('clientes_', 'c_').strip('_')
 
 df['E'] = df['ventana_inicio'].apply(time_to_minutes)
 df['L'] = df['ventana_fin'].apply(time_to_minutes)
@@ -204,10 +206,18 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
         end function
     """
     df_input = data.copy()
+    prefix = file_summary
     if clockwise:
         df_input['AN'] = df_input['AN'].apply(clockwise_angle)
+        prefix += "_cw"
+    else:
+        prefix += "_ccw"
+
     if split_demands:
         df_input = split_client_demands(df_input)
+        prefix += "_sd"
+    else:
+        prefix += "_nsd"
 
     instance = ProblemInstance(
         df_input, tipos_cisternas, num_vehiculos_por_tipo, 
@@ -219,12 +229,12 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
     
     # Construcción inicial con Angular Sweep
     rutas = sweep_solver.forward_sweep()
-    visualizer.imprimir_solucion(rutas, 1)
+    visualizer.imprimir_solucion(rutas, 1, phase_name="forward_sweep", iterations=0, prefix=prefix)
     # visualizer.visualizar_rutas(rutas, "Forward Sweep")
 
     # Mejora con "2-opt" bidireccional
     rutas = sweep_solver.iterative_improving_sweep(rutas)
-    visualizer.imprimir_solucion(rutas, 1)
+    visualizer.imprimir_solucion(rutas, 1, phase_name="improving_sweep", iterations=0, prefix=prefix)
     visualizer.visualizar_rutas(rutas, "Forward Sweep + 2-opt bidirectional")
 
     # Iterated Tabu Search
@@ -246,7 +256,7 @@ def tabu_search_mcvrptw(data: pd.DataFrame, tipos_cisternas: Dict,
             best_cost = current_cost
             print(f"  [Iteración {iteration}] Nueva mejor solución: ${best_cost:,.2f}")
     
-    visualizer.imprimir_solucion(best_solution, 2)
+    visualizer.imprimir_solucion(best_solution, 2, phase_name="final_solution", iterations=I, prefix=prefix)
     visualizer.visualizar_rutas(best_solution, "Iterated Tabu Search - Final Solution")
     return best_solution, best_cost
 
