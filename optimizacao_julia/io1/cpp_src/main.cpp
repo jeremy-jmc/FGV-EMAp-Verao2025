@@ -40,7 +40,8 @@ int main() {
             auto rutas = sweep_solver.forward_sweep();
             visualizer.imprimir_solucion(rutas, 1, "forward_sweep", 0, prefix);
             
-            auto improved_rutas = sweep_solver.iterative_improving_sweep(rutas);
+            auto improved_rutas_pair = sweep_solver.improving_sweep(rutas, cc);
+            auto improved_rutas = improved_rutas_pair.first;
             visualizer.imprimir_solucion(improved_rutas, 1, "improving_sweep", 0, prefix);
         }
     }
