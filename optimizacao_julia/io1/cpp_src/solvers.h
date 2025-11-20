@@ -15,6 +15,10 @@ public:
     std::pair<std::vector<Ruta>, bool> improving_sweep(const std::vector<Ruta>& rutas_candidatas, bool clockwise = false);
     std::vector<Ruta> iterative_improving_sweep(const std::vector<Ruta>& rutas_candidatas);
 
+    ProblemInstance& get_instance() { return instance; }
+    RouteEvaluator& get_evaluator() { return evaluator; }
+    const std::vector<Ruta>& get_best_solution() const { return best_solution; }
+
     struct InsercionInfo {
         int pos;
         Cisterna cisterna;
@@ -93,6 +97,48 @@ private:
         const Ruta& ruta_original_k,
         const Ruta& ruta_original_k_plus_1
     );
+};
+
+class SolverTabuSearchMCVRPTW {
+public:
+    SolverTabuSearchMCVRPTW(SweepAlgorithm& sweep_solver);
+
+    std::vector<Ruta> perturbation(const std::vector<Ruta>& rutas, int k_max = 5);
+    std::vector<Ruta> tabu_search(const std::vector<Ruta>& rutas, int current_iteration);
+
+private:
+    SweepAlgorithm& sweep;
+    RouteEvaluator& evaluator;
+    ProblemInstance& instance;
+    
+    std::vector<Ruta> best_solution;
+    double alpha = 0.0;
+    double beta = 0.0;
+    double rho = 10.0;
+    // Define TabuList structure: e.g., std::vector<TabuMove>
+    // struct TabuMove { int client_id; int route_idx; int expiration; };
+    // std::vector<TabuMove> tabu_list;
+    double incumbent_cost;
+    int r_prime;
+
+    std::map<int, std::vector<int>> _build_p_neighborhoods(const std::vector<int>& clientes, int p);
+    
+    std::optional<double> _calculate_insertion_cost(
+        const std::vector<int>& route_clients, 
+        int insert_pos, 
+        int vertex, 
+        const Cisterna& cisterna, 
+        const std::map<int, std::vector<std::string>>& productos_map
+    );
+
+    std::optional<std::pair<std::vector<int>, double>> _try_simple_insertion(
+        const std::vector<int>& route_clients, 
+        int v, 
+        const Cisterna& cisterna, 
+        std::map<int, std::vector<std::string>> productos_map
+    );
+
+    std::vector<Ruta> geni_insertion(std::vector<Ruta> rutas, int vertex_to_be_inserted, int p = 5);
 };
 
 #endif // SOLVERS_H

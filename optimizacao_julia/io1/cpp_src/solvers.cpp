@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <random> // Required for std::mt19937 and std::random_device
 
 SweepAlgorithm::SweepAlgorithm(ProblemInstance& instance)
     : instance(instance), evaluator(instance) {}
@@ -492,4 +493,199 @@ std::vector<Ruta> SweepAlgorithm::iterative_improving_sweep(const std::vector<Ru
 
     best_solution = rutas_actuales;
     return rutas_actuales;
+}
+
+// -----------------------------------------------------------------------------
+// Tabu Search Solver Implementation
+// -----------------------------------------------------------------------------
+
+SolverTabuSearchMCVRPTW::SolverTabuSearchMCVRPTW(SweepAlgorithm& sweep_solver)
+    : sweep(sweep_solver), 
+      evaluator(sweep_solver.get_evaluator()),
+      instance(sweep_solver.get_instance())
+{
+    best_solution = sweep.get_best_solution();
+    incumbent_cost = 0;
+    for(const auto& r : best_solution) {
+        incumbent_cost += r.costo_total;
+    }
+    r_prime = best_solution.size();
+}
+
+std::map<int, std::vector<int>> SolverTabuSearchMCVRPTW::_build_p_neighborhoods(const std::vector<int>& clientes, int p) {
+    std::map<int, std::vector<int>> neighborhoods;
+    for (int cliente_id : clientes) {
+        std::vector<std::pair<int, double>> distances;
+        for (int other_id : clientes) {
+            if (cliente_id != other_id) {
+                distances.push_back({other_id, instance.distancia(cliente_id, other_id)});
+            }
+        }
+        std::sort(distances.begin(), distances.end(), [](const auto& a, const auto& b) {
+            return a.second < b.second;
+        });
+        
+        std::vector<int> neighbors;
+        for (int i = 0; i < std::min((int)distances.size(), p); ++i) {
+            neighbors.push_back(distances[i].first);
+        }
+        neighborhoods[cliente_id] = neighbors;
+    }
+    return neighborhoods;
+}
+
+std::optional<double> SolverTabuSearchMCVRPTW::_calculate_insertion_cost(
+    const std::vector<int>& route_clients, 
+    int insert_pos, 
+    int vertex, 
+    const Cisterna& cisterna, 
+    const std::map<int, std::vector<std::string>>& productos_map) 
+{
+    std::vector<int> new_route = route_clients;
+    new_route.insert(new_route.begin() + insert_pos, vertex);
+
+    auto [factible, tiempo_total, info] = evaluator.verificar_factibilidad_ruta(new_route, cisterna, productos_map);
+    if (!factible) {
+        return std::nullopt;
+    }
+
+    double distancia = evaluator.calcular_distancia_ruta(new_route);
+    return cisterna.costo_fijo + cisterna.costo_km * distancia;
+}
+
+std::optional<std::pair<std::vector<int>, double>> SolverTabuSearchMCVRPTW::_try_simple_insertion(
+    const std::vector<int>& route_clients, 
+    int v, 
+    const Cisterna& cisterna, 
+    std::map<int, std::vector<std::string>> productos_map)
+{
+    const auto& cliente_v = instance.cliente_por_id(v);
+    std::vector<std::string> prods;
+    if (cliente_v.demanda_gasohol > 0) prods.push_back("G");
+    if (cliente_v.demanda_diesel > 0) prods.push_back("D");
+    productos_map[v] = prods;
+
+    std::optional<int> best_pos;
+    double best_cost = std::numeric_limits<double>::infinity();
+
+    for (size_t pos = 0; pos <= route_clients.size(); ++pos) {
+        auto cost_opt = _calculate_insertion_cost(route_clients, pos, v, cisterna, productos_map);
+        if (cost_opt && *cost_opt < best_cost) {
+            best_pos = pos;
+            best_cost = *cost_opt;
+        }
+    }
+
+    if (best_pos) {
+        std::vector<int> new_route = route_clients;
+        new_route.insert(new_route.begin() + *best_pos, v);
+        return std::make_pair(new_route, best_cost);
+    }
+    return std::nullopt;
+}
+
+std::vector<Ruta> SolverTabuSearchMCVRPTW::geni_insertion(std::vector<Ruta> rutas, int vertex_to_be_inserted, int p) {
+    std::optional<std::pair<std::vector<int>, const Cisterna*>> best_insertion;
+    double best_cost = std::numeric_limits<double>::infinity();
+    int best_route_idx = -1;
+
+    for (int i = 0; i < rutas.size(); ++i) {
+        auto& ruta = rutas[i];
+        auto simple_insertion_opt = _try_simple_insertion(ruta.clientes, vertex_to_be_inserted, ruta.cisterna, ruta.productos_entregados);
+        
+        if (simple_insertion_opt && simple_insertion_opt->second < best_cost) {
+            best_cost = simple_insertion_opt->second;
+            best_insertion = std::make_pair(simple_insertion_opt->first, &ruta.cisterna);
+            best_route_idx = i;
+        }
+    }
+
+    if (best_insertion) {
+        auto& [new_route_clients, cisterna_ptr] = *best_insertion;
+        
+        std::map<int, std::vector<std::string>> new_productos_map;
+        for (int cid : new_route_clients) {
+            const auto& cliente = instance.cliente_por_id(cid);
+            std::vector<std::string> prods;
+            if (cliente.demanda_gasohol > 0) prods.push_back("G");
+            if (cliente.demanda_diesel > 0) prods.push_back("D");
+            if (!prods.empty()) new_productos_map[cid] = prods;
+        }
+
+        auto new_ruta_opt = evaluator.crear_ruta_objeto(new_route_clients, *cisterna_ptr, new_productos_map);
+        if (new_ruta_opt) {
+            rutas[best_route_idx] = *new_ruta_opt;
+        }
+    } else {
+        // If no insertion is possible, create a new route
+        const auto& cliente = instance.cliente_por_id(vertex_to_be_inserted);
+        std::map<int, std::vector<std::string>> productos_map;
+        std::vector<std::string> prods;
+        if (cliente.demanda_gasohol > 0) prods.push_back("G");
+        if (cliente.demanda_diesel > 0) prods.push_back("D");
+        productos_map[vertex_to_be_inserted] = prods;
+
+        auto vehiculos_usados = contar_vehiculos_cpp(rutas);
+        auto cisterna_opt = evaluator.seleccionar_mejor_cisterna({vertex_to_be_inserted}, productos_map, vehiculos_usados);
+
+        if (cisterna_opt) {
+            auto new_ruta_opt = evaluator.crear_ruta_objeto({vertex_to_be_inserted}, *cisterna_opt, productos_map);
+            if (new_ruta_opt) {
+                rutas.push_back(*new_ruta_opt);
+            }
+        } else {
+            std::cerr << "WARN: Could not insert client " << vertex_to_be_inserted << " and could not create a new route." << std::endl;
+        }
+    }
+    return rutas;
+}
+
+std::vector<Ruta> SolverTabuSearchMCVRPTW::perturbation(const std::vector<Ruta>& rutas, int k_max) {
+    auto rutas_perturbadas = rutas;
+    
+    std::vector<int> all_clients;
+    for (const auto& r : rutas_perturbadas) {
+        all_clients.insert(all_clients.end(), r.clientes.begin(), r.clientes.end());
+    }
+
+    if (all_clients.empty()) return rutas;
+
+    int k = std::rand() % std::min((int)all_clients.size(), k_max) + 1;
+
+    std::vector<int> clientes_a_remover;
+    std::sample(all_clients.begin(), all_clients.end(), std::back_inserter(clientes_a_remover), k, std::mt19937{std::random_device{}()});
+
+    for (auto& r : rutas_perturbadas) {
+        r.clientes.erase(std::remove_if(r.clientes.begin(), r.clientes.end(), [&](int c) {
+            return std::find(clientes_a_remover.begin(), clientes_a_remover.end(), c) != clientes_a_remover.end();
+        }), r.clientes.end());
+    }
+
+    for (int cliente_id : clientes_a_remover) {
+        rutas_perturbadas = geni_insertion(rutas_perturbadas, cliente_id);
+    }
+
+    std::vector<Ruta> rutas_finales;
+    for (auto& r : rutas_perturbadas) {
+        if (r.clientes.empty()) continue;
+
+        auto vehiculos_usados = contar_vehiculos_cpp(rutas_finales);
+        auto cisterna_opt = evaluator.seleccionar_mejor_cisterna(r.clientes, r.productos_entregados, vehiculos_usados);
+        if (cisterna_opt) {
+            auto nueva_ruta_opt = evaluator.crear_ruta_objeto(r.clientes, *cisterna_opt, r.productos_entregados);
+            if (nueva_ruta_opt) {
+                rutas_finales.push_back(*nueva_ruta_opt);
+            }
+        } else {
+            std::cerr << "WARN: Could not find a cistern for a perturbed route. Route discarded." << std::endl;
+        }
+    }
+
+    return rutas_finales;
+}
+
+std::vector<Ruta> SolverTabuSearchMCVRPTW::tabu_search(const std::vector<Ruta>& rutas, int current_iteration) {
+    // Placeholder implementation
+    // TODO: Implement actual Tabu Search logic
+    return rutas;
 }
