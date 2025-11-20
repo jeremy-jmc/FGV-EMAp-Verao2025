@@ -10,9 +10,13 @@
 
 class SweepAlgorithm {
 public:
+    // Constructor que inicializa el algoritmo con una instancia del problema.
     SweepAlgorithm(ProblemInstance& instance);
+    // Construye una solución inicial usando el algoritmo de barrido angular (forward sweep).
     std::vector<Ruta> forward_sweep();
+    // Intenta mejorar una solución intercambiando clientes entre rutas adyacentes.
     std::pair<std::vector<Ruta>, bool> improving_sweep(const std::vector<Ruta>& rutas_candidatas, bool clockwise = false);
+    // Aplica el 'improving_sweep' iterativamente en ambas direcciones hasta que no haya más mejoras.
     std::vector<Ruta> iterative_improving_sweep(const std::vector<Ruta>& rutas_candidatas);
 
     ProblemInstance& get_instance() { return instance; }
@@ -101,9 +105,12 @@ private:
 
 class SolverTabuSearchMCVRPTW {
 public:
+    // Constructor que inicializa el solver de búsqueda tabú.
     SolverTabuSearchMCVRPTW(SweepAlgorithm& sweep_solver);
 
+    // Aplica una perturbación a la solución actual para escapar de óptimos locales.
     std::vector<Ruta> perturbation(const std::vector<Ruta>& rutas, int k_max = 5);
+    // Ejecuta el algoritmo de búsqueda tabú para mejorar una solución.
     std::vector<Ruta> tabu_search(const std::vector<Ruta>& rutas, int current_iteration);
     const std::vector<Ruta>& get_best_solution() const { return best_solution; }
 

@@ -6,8 +6,10 @@
 #include <numeric>
 #include <filesystem>
 
+// Constructor que inicializa el visualizador con una instancia del problema.
 SolutionVisualizer::SolutionVisualizer(const ProblemInstance& instance) : instance(instance) {}
 
+// Imprime y guarda un resumen detallado de la solución (conjunto de rutas).
 void SolutionVisualizer::imprimir_solucion(const std::vector<Ruta>& rutas, int verbosity, const std::string& phase_name, int iterations, const std::string& prefix) {
     std::stringstream output;
 

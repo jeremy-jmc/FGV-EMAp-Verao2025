@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 
+// Convierte una cadena de tiempo en formato "HH:MM" a minutos desde las 04:00.
 int time_to_minutes(const std::string& time_str) {
     int h = std::stoi(time_str.substr(0, 2));
     int m = std::stoi(time_str.substr(3, 2));
     return (h - 4) * 60 + m;
 }
 
+// Calcula el ángulo en coordenadas polares de un punto (x, y) con respecto al depósito.
 double polar_coordinate_angle(double x, double y, double depot_x, double depot_y) {
     double delta_x = x - depot_x;
     double delta_y = y - depot_y;
@@ -16,14 +18,17 @@ double polar_coordinate_angle(double x, double y, double depot_x, double depot_y
     return angle >= 0 ? angle : angle + 2 * M_PI;
 }
 
+// Calcula la distancia radial de un punto (x, y) al depósito.
 double radius(double x, double y, double depot_x, double depot_y) {
     return std::sqrt(pow(x - depot_x, 2) + pow(y - depot_y, 2));
 }
 
+// Convierte un ángulo en sentido antihorario a su equivalente en sentido horario.
 double clockwise_angle(double angle_ccw) {
     return fmod(-angle_ccw + 2 * M_PI, 2 * M_PI);
 }
 
+// Divide los clientes con demandas de múltiples productos en clientes separados por producto.
 std::vector<Cliente> split_client_demands(const std::vector<Cliente>& original_clientes) {
     std::vector<Cliente> split_clientes;
     for (const auto& c : original_clientes) {
@@ -53,10 +58,7 @@ std::vector<Cliente> split_client_demands(const std::vector<Cliente>& original_c
     return split_clientes;
 }
 
-
-
-
-
+// Constructor de la instancia del problema, que carga y procesa todos los datos necesarios.
 ProblemInstance::ProblemInstance(const std::vector<std::vector<std::string>>& data,
                                  const std::map<int, std::map<std::string, double>>& tipos_cisternas,
                                  bool clockwise,
@@ -154,16 +156,19 @@ ProblemInstance::ProblemInstance(const std::vector<std::vector<std::string>>& da
     }
 }
 
+// Devuelve la distancia entre dos nodos (clientes o depósito) usando la matriz de distancias precalculada.
 double ProblemInstance::distancia(int i, int j) const {
     int idx_i = cliente_id_to_idx.at(i);
     int idx_j = cliente_id_to_idx.at(j);
     return D[idx_i][idx_j];
 }
 
+// Calcula el tiempo de viaje entre dos nodos basado en la distancia y la velocidad.
 double ProblemInstance::tiempo_viaje(int i, int j) const {
     return (distancia(i, j) / velocidad) * 60.0;
 }
 
+// Devuelve el objeto Cliente correspondiente a un ID de cliente.
 const Cliente& ProblemInstance::cliente_por_id(int cliente_id) const {
     if (cliente_id == 0) {
         return depot;

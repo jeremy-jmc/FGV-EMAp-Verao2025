@@ -4,10 +4,12 @@
 #include <iostream>
 #include <algorithm>
 
+// Constructor que inicializa el lector de CSV con el nombre del archivo y lee los datos.
 CSVReader::CSVReader(const std::string& filename) : filename(filename) {
     read_data();
 }
 
+// Lee los datos del archivo CSV línea por línea y los almacena en la memoria.
 void CSVReader::read_data() {
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -33,6 +35,7 @@ void CSVReader::read_data() {
     file.close();
 }
 
+// Devuelve los datos leídos, reordenándolos para asegurar que el depósito esté en la primera fila.
 std::vector<std::vector<std::string>> CSVReader::getData() {
     // The first row in the CSV is the depot, but the python code reads it as a normal client and then extracts it.
     // To replicate that, I need to find the depot row and put it at the beginning.

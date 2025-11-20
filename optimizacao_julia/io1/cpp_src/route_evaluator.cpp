@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <iostream>
 
+// Constructor que inicializa el evaluador de rutas con una instancia del problema.
 RouteEvaluator::RouteEvaluator(ProblemInstance& instance) : instance(instance) {}
 
+// Calcula el tiempo de servicio en un cliente según los productos entregados.
 double RouteEvaluator::calcular_tiempo_servicio(const std::vector<std::string>& productos) const {
     return productos.size() * instance.tiempo_descarga;
 }
 
+// Verifica si una ruta es factible en términos de capacidad y ventanas de tiempo.
 std::tuple<bool, double, std::map<std::string, double>>
 RouteEvaluator::verificar_factibilidad_ruta(const std::vector<int>& ruta, const Cisterna& cisterna,
                                            const std::map<int, std::vector<std::string>>& productos_por_cliente) {
@@ -78,6 +81,7 @@ RouteEvaluator::verificar_factibilidad_ruta(const std::vector<int>& ruta, const 
     return {true, tiempo_retorno, info};
 }
 
+// Calcula la distancia total de una ruta, incluyendo el viaje desde y hacia el depósito.
 double RouteEvaluator::calcular_distancia_ruta(const std::vector<int>& ruta) const {
     if (ruta.empty()) {
         return 0.0;
@@ -92,6 +96,7 @@ double RouteEvaluator::calcular_distancia_ruta(const std::vector<int>& ruta) con
     return distancia;
 }
 
+// Selecciona la cisterna de menor costo que puede realizar una ruta de manera factible.
 std::optional<Cisterna> RouteEvaluator::seleccionar_mejor_cisterna(const std::vector<int>& ruta,
                                                                    const std::map<int, std::vector<std::string>>& productos_por_cliente,
                                                                    std::map<int, int>& vehiculos_usados) {
@@ -123,6 +128,7 @@ std::optional<Cisterna> RouteEvaluator::seleccionar_mejor_cisterna(const std::ve
     return cisternas_factibles[0].first;
 }
 
+// Crea un objeto Ruta completo con todos sus atributos calculados.
 std::optional<Ruta> RouteEvaluator::crear_ruta_objeto(const std::vector<int>& clientes, const Cisterna& cisterna,
                                        const std::map<int, std::vector<std::string>>& productos_por_cliente) {
     auto [factible, tiempo_total, info] = verificar_factibilidad_ruta(clientes, cisterna, productos_por_cliente);

@@ -8,11 +8,13 @@
 #include "solvers.h"
 #include "solution_visualizer.h"
 
+// Convierte un ángulo en sentido antihorario a su equivalente en sentido horario.
 std::string clockwise_angle_str(double angle_ccw) {
     double angle = fmod(-angle_ccw, 2 * M_PI);
     return std::to_string(angle);
 }
 
+// Función principal que ejecuta el algoritmo de barrido y búsqueda tabú para resolver el problema de ruteo de vehículos.
 int main() {
     std::string file_name = "../instancias/100_clientes.csv";
     std::string file_summary = "100_c";
