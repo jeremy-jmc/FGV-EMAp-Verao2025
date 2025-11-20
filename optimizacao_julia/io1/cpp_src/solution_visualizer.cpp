@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iomanip>
 #include <numeric>
+#include <filesystem>
 
 SolutionVisualizer::SolutionVisualizer(const ProblemInstance& instance) : instance(instance) {}
 
@@ -85,14 +86,11 @@ void SolutionVisualizer::imprimir_solucion(const std::vector<Ruta>& rutas, int v
     output << "\n" << std::string(80, '=') << "\n";
 
     std::cout << output.str();
-
     if (!phase_name.empty() && iterations != -1) {
         std::string results_dir = "../results";
-        // The following is not standard C++11, but it is common in C++17
-        // #include <filesystem>
-        // if (!std::filesystem::exists(results_dir)) {
-        //     std::filesystem::create_directory(results_dir);
-        // }
+        if (!std::filesystem::exists(results_dir)) {
+            std::filesystem::create_directory(results_dir);
+        }
         std::string filename = prefix + "_phase_" + phase_name + "_it" + std::to_string(iterations) + "_cpp.txt";
         std::ofstream file(results_dir + "/" + filename);
         if (file.is_open()) {

@@ -14,8 +14,8 @@ std::string clockwise_angle_str(double angle_ccw) {
 }
 
 int main() {
-    std::string file_name = "../instancias/25_clientes_1.csv";
-    std::string file_summary = "25_c_1";
+    std::string file_name = "../instancias/100_clientes.csv";
+    std::string file_summary = "100_c";
 
     CSVReader reader(file_name);
     auto base_data = reader.getData();
