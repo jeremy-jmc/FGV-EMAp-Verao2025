@@ -105,6 +105,8 @@ public:
 
     std::vector<Ruta> perturbation(const std::vector<Ruta>& rutas, int k_max = 5);
     std::vector<Ruta> tabu_search(const std::vector<Ruta>& rutas, int current_iteration);
+    const std::vector<Ruta>& get_best_solution() const { return best_solution; }
+
 
 private:
     SweepAlgorithm& sweep;
@@ -112,12 +114,24 @@ private:
     ProblemInstance& instance;
     
     std::vector<Ruta> best_solution;
-    double alpha = 0.0;
-    double beta = 0.0;
-    double rho = 10.0;
-    // Define TabuList structure: e.g., std::vector<TabuMove>
-    // struct TabuMove { int client_id; int route_idx; int expiration; };
-    // std::vector<TabuMove> tabu_list;
+    double alpha = 1.0;
+    double beta = 1.0;
+    const double rho = 10.0;
+    
+    struct TabuMove {
+        int vertex;
+        std::vector<std::string> products;
+        int source_route_idx;
+        int expiration_iteration;
+
+        bool operator==(const TabuMove& other) const {
+            return vertex == other.vertex &&
+                   products == other.products &&
+                   source_route_idx == other.source_route_idx;
+        }
+    };
+
+    std::vector<TabuMove> tabu_list;
     double incumbent_cost;
     int r_prime;
 
@@ -139,6 +153,28 @@ private:
     );
 
     std::vector<Ruta> geni_insertion(std::vector<Ruta> rutas, int vertex_to_be_inserted, int p = 5);
+
+    struct ViolationInfo {
+        double capacity_excess = 0.0;
+        double distance_excess = 0.0;
+        double tw_excess = 0.0;
+        bool has_violations = false;
+    };
+
+    ViolationInfo _calculate_violations(const std::vector<Ruta>& rutas);
+    double _calculate_penalized_objective(const std::vector<Ruta>& rutas);
+    std::map<int, std::vector<int>> _build_nearest_routes(const std::vector<Ruta>& rutas);
+    std::optional<std::vector<Ruta>> _apply_shift_move(
+        std::vector<Ruta> rutas, 
+        int source_idx, 
+        int dest_idx,
+        int vertex, 
+        const std::vector<std::string>& products
+    );
+    bool _is_tabu(int vertex, const std::vector<std::string>& products, int source_idx, int iteration);
+    void _update_tabu_list(int vertex, const std::vector<std::string>& products, int source_idx, int tenure, int iteration);
+    std::vector<Ruta> _best_shift_move(std::vector<Ruta> rutas, int iteration, int tenure);
+    void _update_penalties(const ViolationInfo& violations, double delta);
 };
 
 #endif // SOLVERS_H

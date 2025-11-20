@@ -4,7 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
-#include <random> // Required for std::mt19937 and std::random_device
+#include <random>
+#include <set>
 
 SweepAlgorithm::SweepAlgorithm(ProblemInstance& instance)
     : instance(instance), evaluator(instance) {}
@@ -589,7 +590,7 @@ std::vector<Ruta> SolverTabuSearchMCVRPTW::geni_insertion(std::vector<Ruta> ruta
     double best_cost = std::numeric_limits<double>::infinity();
     int best_route_idx = -1;
 
-    for (int i = 0; i < rutas.size(); ++i) {
+    for (size_t i = 0; i < rutas.size(); ++i) {
         auto& ruta = rutas[i];
         auto simple_insertion_opt = _try_simple_insertion(ruta.clientes, vertex_to_be_inserted, ruta.cisterna, ruta.productos_entregados);
         
@@ -600,7 +601,7 @@ std::vector<Ruta> SolverTabuSearchMCVRPTW::geni_insertion(std::vector<Ruta> ruta
         }
     }
 
-    if (best_insertion) {
+    if (best_insertion && best_route_idx != -1) {
         auto& [new_route_clients, cisterna_ptr] = *best_insertion;
         
         std::map<int, std::vector<std::string>> new_productos_map;
@@ -650,16 +651,22 @@ std::vector<Ruta> SolverTabuSearchMCVRPTW::perturbation(const std::vector<Ruta>&
 
     if (all_clients.empty()) return rutas;
 
-    int k = std::rand() % std::min((int)all_clients.size(), k_max) + 1;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    int k = std::uniform_int_distribution<>(1, std::min((int)all_clients.size(), k_max))(gen);
 
     std::vector<int> clientes_a_remover;
-    std::sample(all_clients.begin(), all_clients.end(), std::back_inserter(clientes_a_remover), k, std::mt19937{std::random_device{}()});
+    std::sample(all_clients.begin(), all_clients.end(), std::back_inserter(clientes_a_remover), k, gen);
 
     for (auto& r : rutas_perturbadas) {
         r.clientes.erase(std::remove_if(r.clientes.begin(), r.clientes.end(), [&](int c) {
             return std::find(clientes_a_remover.begin(), clientes_a_remover.end(), c) != clientes_a_remover.end();
         }), r.clientes.end());
     }
+
+    // Remove empty routes
+    rutas_perturbadas.erase(std::remove_if(rutas_perturbadas.begin(), rutas_perturbadas.end(), 
+        [](const Ruta& r){ return r.clientes.empty(); }), rutas_perturbadas.end());
 
     for (int cliente_id : clientes_a_remover) {
         rutas_perturbadas = geni_insertion(rutas_perturbadas, cliente_id);
@@ -685,7 +692,309 @@ std::vector<Ruta> SolverTabuSearchMCVRPTW::perturbation(const std::vector<Ruta>&
 }
 
 std::vector<Ruta> SolverTabuSearchMCVRPTW::tabu_search(const std::vector<Ruta>& rutas, int current_iteration) {
-    // Placeholder implementation
-    // TODO: Implement actual Tabu Search logic
+    // Calculate tabu tenure
+    int n = instance.clientes.size();
+    int tau = 1;
+    if (n > 0 && r_prime > 0) {
+        std::uniform_int_distribution<> dist(1, static_cast<int>(sqrt(n * r_prime)));
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        tau = dist(gen);
+    }
+
+    // Find and apply best shift move
+    auto new_rutas = _best_shift_move(rutas, current_iteration, tau);
+
+    // Calculate violations and update penalties
+    auto violations = _calculate_violations(new_rutas);
+    std::uniform_real_distribution<> dist_delta(0.1, 0.3);
+    std::random_device rd_delta;
+    std::mt19937 gen_delta(rd_delta());
+    double delta = dist_delta(gen_delta);
+    _update_penalties(violations, delta);
+
+    return new_rutas;
+}
+
+SolverTabuSearchMCVRPTW::ViolationInfo SolverTabuSearchMCVRPTW::_calculate_violations(const std::vector<Ruta>& rutas) {
+    ViolationInfo violations;
+    for (const auto& ruta : rutas) {
+        // Capacity violations
+        double delta_gasohol = std::max(0.0, ruta.carga_gasohol - ruta.cisterna.cap_gasohol);
+        double delta_diesel = std::max(0.0, ruta.carga_diesel - ruta.cisterna.cap_diesel);
+        violations.capacity_excess += std::max(delta_gasohol, delta_diesel);
+
+        // Distance/time violations
+        double max_tiempo = instance.depot.ventana_fin;
+        violations.distance_excess += std::max(0.0, ruta.tiempo_total - max_tiempo);
+
+        // Time window violations
+        double tiempo_actual = instance.depot.ventana_inicio;
+        int nodo_actual = 0;
+        for (int cliente_id : ruta.clientes) {
+            const auto& cliente = instance.cliente_por_id(cliente_id);
+            double tiempo_viaje = instance.tiempo_viaje(nodo_actual, cliente_id);
+            double tiempo_llegada = tiempo_actual + tiempo_viaje;
+
+            if (tiempo_llegada > cliente.ventana_fin) {
+                violations.tw_excess += tiempo_llegada - cliente.ventana_fin;
+            }
+            if (tiempo_llegada < cliente.ventana_inicio) {
+                tiempo_llegada = cliente.ventana_inicio;
+            }
+
+            auto it = ruta.productos_entregados.find(cliente_id);
+            if (it != ruta.productos_entregados.end()) {
+                 tiempo_actual = tiempo_llegada + evaluator.calcular_tiempo_servicio(it->second);
+            }
+           
+            nodo_actual = cliente_id;
+        }
+    }
+    violations.has_violations = violations.capacity_excess > 0 || violations.distance_excess > 0 || violations.tw_excess > 0;
+    return violations;
+}
+
+double SolverTabuSearchMCVRPTW::_calculate_penalized_objective(const std::vector<Ruta>& rutas) {
+    auto violations = _calculate_violations(rutas);
+    double base_cost = 0.0;
+    for (const auto& r : rutas) {
+        base_cost += r.costo_total;
+    }
+    return base_cost + alpha * violations.capacity_excess + beta * violations.distance_excess + rho * violations.tw_excess;
+}
+
+std::map<int, std::vector<int>> SolverTabuSearchMCVRPTW::_build_nearest_routes(const std::vector<Ruta>& rutas) {
+    if (rutas.empty()) {
+        return {};
+    }
+
+    double total_distance = 0;
+    int total_visits = 0;
+    std::vector<int> all_clients;
+    for (const auto& r : rutas) {
+        total_distance += r.distancia_total;
+        total_visits += r.clientes.size();
+        all_clients.insert(all_clients.end(), r.clientes.begin(), r.clientes.end());
+    }
+    double d_hat = (total_visits > 0) ? total_distance / total_visits : 1.0;
+
+    std::map<int, std::vector<int>> nearest_routes;
+    for (int cliente_id : all_clients) {
+        double threshold = 2 * d_hat;
+        std::vector<int> found_routes;
+        while (found_routes.empty() && threshold < 10000) { // Safety break
+            for (size_t i = 0; i < rutas.size(); ++i) {
+                for (int other_client : rutas[i].clientes) {
+                    if (instance.distancia(cliente_id, other_client) <= threshold) {
+                        found_routes.push_back(i);
+                        break;
+                    }
+                }
+            }
+            if (found_routes.empty()) {
+                threshold *= 1.2;
+            }
+        }
+        std::sort(found_routes.begin(), found_routes.end());
+        found_routes.erase(std::unique(found_routes.begin(), found_routes.end()), found_routes.end());
+        nearest_routes[cliente_id] = found_routes;
+    }
+    return nearest_routes;
+}
+
+std::optional<std::vector<Ruta>> SolverTabuSearchMCVRPTW::_apply_shift_move(
+    std::vector<Ruta> rutas, int source_idx, int dest_idx, int vertex, const std::vector<std::string>& products)
+{
+    if (source_idx >= rutas.size() || dest_idx >= rutas.size()) return std::nullopt;
+
+    Ruta& source_route = rutas[source_idx];
+    
+    auto it_v = std::find(source_route.clientes.begin(), source_route.clientes.end(), vertex);
+    if (it_v == source_route.clientes.end()) return std::nullopt;
+
+    auto it_p = source_route.productos_entregados.find(vertex);
+    if (it_p == source_route.productos_entregados.end()) return std::nullopt;
+
+    std::vector<std::string> original_products = it_p->second;
+    std::vector<std::string> remaining_products;
+    std::set<std::string> p_set(products.begin(), products.end());
+
+    for(const auto& op : original_products) {
+        if(p_set.find(op) == p_set.end()) {
+            remaining_products.push_back(op);
+        }
+    }
+
+    if (remaining_products.empty()) { // Case 1: Move all products
+        source_route.clientes.erase(it_v);
+        source_route.productos_entregados.erase(it_p);
+
+        if (source_route.clientes.empty()) {
+            rutas.erase(rutas.begin() + source_idx);
+            if (dest_idx > source_idx) dest_idx--;
+        } else {
+            auto vehiculos_usados = contar_vehiculos_cpp(rutas);
+            if(vehiculos_usados.count(source_route.cisterna.tipo))
+                vehiculos_usados[source_route.cisterna.tipo]--;
+            auto new_cisterna_opt = evaluator.seleccionar_mejor_cisterna(source_route.clientes, source_route.productos_entregados, vehiculos_usados);
+            if (!new_cisterna_opt) return std::nullopt;
+            auto new_ruta_opt = evaluator.crear_ruta_objeto(source_route.clientes, *new_cisterna_opt, source_route.productos_entregados);
+            if (!new_ruta_opt) return std::nullopt;
+            rutas[source_idx] = *new_ruta_opt;
+        }
+    } else { // Case 2: Split demands
+        source_route.productos_entregados[vertex] = remaining_products;
+        auto new_ruta_opt = evaluator.crear_ruta_objeto(source_route.clientes, source_route.cisterna, source_route.productos_entregados);
+        if (!new_ruta_opt) return std::nullopt;
+        rutas[source_idx] = *new_ruta_opt;
+    }
+
+    if (dest_idx >= rutas.size()) { // Destination route might have been removed
+        // This case needs careful handling. For now, we might fail the move.
+        // A better approach would be to re-validate dest_idx or handle creating a new route.
+        return std::nullopt;
+    }
+    Ruta& dest_route = rutas[dest_idx];
+
+    auto it_dest_v = std::find(dest_route.clientes.begin(), dest_route.clientes.end(), vertex);
+    if (it_dest_v != dest_route.clientes.end()) { // Vertex already in dest route
+        auto& dest_prods = dest_route.productos_entregados[vertex];
+        dest_prods.insert(dest_prods.end(), products.begin(), products.end());
+        std::sort(dest_prods.begin(), dest_prods.end());
+        dest_prods.erase(std::unique(dest_prods.begin(), dest_prods.end()), dest_prods.end());
+        
+        auto new_ruta_opt = evaluator.crear_ruta_objeto(dest_route.clientes, dest_route.cisterna, dest_route.productos_entregados);
+        if (!new_ruta_opt) return std::nullopt; // Could fail if new total demand is infeasible
+        rutas[dest_idx] = *new_ruta_opt;
+    } else { // Insert new vertex into dest route
+        std::vector<int> new_dest_clients = dest_route.clientes;
+        new_dest_clients.push_back(vertex);
+        
+        auto new_dest_prods = dest_route.productos_entregados;
+        new_dest_prods[vertex] = products;
+
+        // We need to find the best insertion position
+        auto temp_rutas = rutas;
+        temp_rutas.erase(temp_rutas.begin() + dest_idx);
+        auto vehiculos_usados = contar_vehiculos_cpp(temp_rutas);
+
+        auto result = geni_insertion(std::vector<Ruta>{dest_route}, vertex);
+        if (result.size() != 1) return std::nullopt; // Insertion failed
+        rutas[dest_idx] = result[0];
+    }
     return rutas;
+}
+
+bool SolverTabuSearchMCVRPTW::_is_tabu(int vertex, const std::vector<std::string>& products, int source_idx, int iteration) {
+    for (const auto& move : tabu_list) {
+        if (move.vertex == vertex && move.products == products && move.source_route_idx == source_idx && iteration < move.expiration_iteration) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SolverTabuSearchMCVRPTW::_update_tabu_list(int vertex, const std::vector<std::string>& products, int source_idx, int tenure, int iteration) {
+    tabu_list.push_back({vertex, products, source_idx, iteration + tenure});
+    // Clean up expired moves
+    tabu_list.erase(std::remove_if(tabu_list.begin(), tabu_list.end(), 
+        [iteration](const TabuMove& move) {
+            return move.expiration_iteration <= iteration;
+        }), tabu_list.end());
+}
+
+std::vector<Ruta> SolverTabuSearchMCVRPTW::_best_shift_move(std::vector<Ruta> rutas, int iteration, int tenure) {
+    if (rutas.empty()) return rutas;
+
+    auto nearest_routes = _build_nearest_routes(rutas);
+    
+    std::optional<std::vector<Ruta>> best_solution_candidate;
+    double best_objective = std::numeric_limits<double>::infinity();
+    
+    struct BestMoveInfo {
+        int vertex;
+        std::vector<std::string> products;
+        int source_idx;
+        int dest_idx;
+    };
+    std::optional<BestMoveInfo> best_move;
+
+    for (size_t source_idx = 0; source_idx < rutas.size(); ++source_idx) {
+        // Create a copy of clients to avoid iterator invalidation issues
+        std::vector<int> source_clients = rutas[source_idx].clientes;
+        for (int vertex : source_clients) {
+            if (rutas[source_idx].productos_entregados.find(vertex) == rutas[source_idx].productos_entregados.end()) continue;
+            const auto& products_in_source = rutas[source_idx].productos_entregados.at(vertex);
+            
+            std::vector<std::vector<std::string>> product_subsets;
+            if (std::find(products_in_source.begin(), products_in_source.end(), "G") != products_in_source.end()) {
+                product_subsets.push_back({"G"});
+            }
+            if (std::find(products_in_source.begin(), products_in_source.end(), "D") != products_in_source.end()) {
+                product_subsets.push_back({"D"});
+            }
+            if (products_in_source.size() == 2) {
+                product_subsets.push_back({"G", "D"});
+            }
+
+            for (const auto& products_tuple : product_subsets) {
+                auto it_routes = nearest_routes.find(vertex);
+                if (it_routes == nearest_routes.end()) continue;
+
+                for (int dest_idx : it_routes->second) {
+                    if (dest_idx >= rutas.size() || dest_idx == source_idx) continue;
+
+                    bool is_tabu = _is_tabu(vertex, products_tuple, source_idx, iteration);
+                    
+                    auto new_solution_opt = _apply_shift_move(rutas, source_idx, dest_idx, vertex, products_tuple);
+                    if (!new_solution_opt) continue;
+
+                    double objective = _calculate_penalized_objective(*new_solution_opt);
+                    double current_cost = 0;
+                    for(const auto& r : *new_solution_opt) current_cost += r.costo_total;
+                    
+                    bool aspiration = (current_cost < incumbent_cost);
+
+                    if ((!is_tabu || aspiration) && (objective < best_objective)) {
+                        best_objective = objective;
+                        best_solution_candidate = new_solution_opt;
+                        best_move = {vertex, products_tuple, (int)source_idx, dest_idx};
+                    }
+                }
+            }
+        }
+    }
+
+    if (best_solution_candidate && best_move) {
+        _update_tabu_list(best_move->vertex, best_move->products, best_move->source_idx, tenure, iteration);
+        
+        auto violations = _calculate_violations(*best_solution_candidate);
+        if (!violations.has_violations) {
+            double actual_cost = 0;
+            for(const auto& r : *best_solution_candidate) actual_cost += r.costo_total;
+            if (actual_cost < incumbent_cost) {
+                incumbent_cost = actual_cost;
+                this->best_solution = *best_solution_candidate;
+                r_prime = this->best_solution.size();
+            }
+        }
+        return *best_solution_candidate;
+    }
+
+    return rutas;
+}
+
+void SolverTabuSearchMCVRPTW::_update_penalties(const ViolationInfo& violations, double delta) {
+    if (violations.has_violations) {
+        if (violations.capacity_excess > 0) {
+            alpha = alpha * (1 + delta);
+        }
+        if (violations.distance_excess > 0) {
+            beta = beta * (1 + delta);
+        }
+    } else {
+        alpha = alpha / (1 + delta);
+        beta = beta / (1 + delta);
+    }
 }
