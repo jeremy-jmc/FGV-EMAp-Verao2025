@@ -57,3 +57,7 @@ optimizacao_julia/io1/misc
 __pycache__/
 .ipynb_checkpoints/
 results/
+*.o
+*.so
+*.out
+mcvro_run
