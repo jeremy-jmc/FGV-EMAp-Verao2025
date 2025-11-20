@@ -209,7 +209,7 @@ class SolutionVisualizer:
         dual_print("\n" + "="*80)
         
         if phase_name is not None and iterations is not None:
-            results_dir = os.path.join(os.path.dirname(__file__), 'results')
+            results_dir = os.path.join(os.path.dirname(__file__), '..', 'results')
             os.makedirs(results_dir, exist_ok=True)
             
             filename = f"{prefix}_phase_{phase_name}_it{iterations}_python.txt"
